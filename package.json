@@ -11,7 +11,8 @@
     "demo": "node scripts/demo.js",
     "verify": "node scripts/verify.js",
     "verify:xlayer": "node scripts/verify-xlayer.js",
-    "fixtures:xlayer": "node scripts/fetch-xlayer-fixtures.js"
+    "fixtures:xlayer": "node scripts/fetch-xlayer-fixtures.js",
+    "verify:refs": "node scripts/verify-ref.js"
   },
   "keywords": [],
   "author": "",

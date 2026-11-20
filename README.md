@@ -19,9 +19,11 @@ Evidence, not claims. Every item below was re-run on 2026-11-20:
 | Decoder agrees with each processor's own `circuitInfo().gateCount` on all 6 non-REF live circuits | REAL | `npm run verify:xlayer` |
 | 436 real TapeOut processors exist on X Layer; factory/beacon/opener/payments code verified at the TAP-02/TAP-10 addresses | REAL | `npm run verify:xlayer` (chainId 196, eth_getCode + eth_call) |
 | `TapeOutV2Adapter` implements the real TAP-02/TAP-10 ABI and plugs into the unchanged core contracts | REAL | `npm test` (last test: full attestation → gate check) |
+| Recursive REF dependency verification | REAL (off-chain verifier) | `npm run verify:refs` — walks REF closure on live X Layer; matches `circuitInfo.gateCount` |
+| Dashboard reads real circuits directly in-browser | REAL | `dashboard/index.html` — live explorer, no gate deploy needed |
 | Netlist's own contracts deployed on X Layer | **NOT YET** — no private key in this repo | see "Deploying to X Layer" |
 | Protocol-enforced composition checks (all calls forced through the gate) | **NOT VERIFIED** — advisory only | see "Honest limitations" |
-| Recursive REF dependency verification | **NOT IMPLEMENTED** | see "Honest limitations" |
+| On-chain recursive REF verification inside the Solidity adapter | **NOT IMPLEMENTED** — off-chain verifier only | see "Honest limitations" |
 
 Re-fetch the fixture any time with `node scripts/fetch-xlayer-fixtures.js`
 (requires network). The fixture is committed so tests never depend on network.
@@ -112,14 +114,15 @@ Don't take this README's word for any of the following, check it directly:
   from X Layer mainnet, checks `eth_getCode` at the TAP-02/TAP-10 addresses,
   and cross-checks decoded gate count against each processor's own
   `circuitInfo()` — with the honest gaps printed at the end. Requires network.
+  `npm run verify:refs` separately walks REF closures against live circuits.
 - **The TAP-02/TAP-10 specs.** Re-fetch `https://github.com/TapeOutProtocol/TAPs`
   yourself; the index table and `TAPs/TAP-02.md` / `TAPs/TAP-10.md` are ground
   truth, not this README, and can change again.
-- **The test suite.** `npm test` runs 29 tests against the real compiled
+- **The test suite.** `npm test` runs 33 tests against the real compiled
   contracts on a local EVM, covering the original 19 (ownership, publisher/
-  auditor split, staleness, policy) plus 10 real-adapter tests, including a
+  auditor split, staleness, policy) plus 10 real-adapter tests (including a
   differential check of the Solidity decoder vs an independent JS decoder on
-  9 circuits fetched from live X Layer.
+  9 circuits fetched from live X Layer) and 4 REF-parser unit tests.
 - **The demo.** `npm run demo` runs the five-step A→B→C scenario end to end
   and prints a full transcript, including the honest boundary of what gets
   caught versus what doesn't (see Step 5's output).
@@ -148,13 +151,14 @@ Don't take this README's word for any of the following, check it directly:
   measured for one 1,204-gate circuit in TAP-02 is cited for context, not
   wired in as a trusted constant. Don't present it as a safety guarantee on
   its own, it's a comparison benchmark.
-- **No recursive dependency verification.** `TapNetlist.sol` decodes REF
-  records and `depthIsBounded()` reports whether a circuit composes others,
-  but it does NOT walk REF targets transitively. `declaredDepsCount` and
-  `depsListHash` remain self-declared. A circuit that uses REF can hide its
-  true depth behind a 31-byte pointer; a caller needing a hard bound must
-  reject `depthIsBounded() == false` or walk the closure separately. See
-  `scripts/demo.js` Step 5.
+- **REF closure is verified off-chain, not on-chain.** `scripts/ref-closure.js`
+  walks REF targets from the netlist bytes and `npm run verify:refs` proves the
+  closure against live X Layer (a real REF circuit's 10 reported gates are
+  reproduced by walking its one target). But doing this inside a Solidity
+  adapter would require an unbounded number of external calls, so the on-chain
+  `depthIsBounded()` still only flags that a circuit composes others — it does
+  not produce a transitive bound. A caller needing a hard guarantee must use
+  the verifier or reject REF circuits. `declaredDepsCount` remains self-declared.
 
 ## Project layout
 
@@ -181,11 +185,14 @@ scripts/
   demo.js       runs the 5-step scenario end to end on a local EVM
   verify.js     provability checklist against a live deployment
   verify-xlayer.js  LIVE adapter cross-check against real X Layer circuits
+  ref-closure.js    recursive TAP-02 REF walker (off-chain verifier)
+  verify-ref.js     LIVE REF-closure cross-check (npm run verify:refs)
   fetch-xlayer-fixtures.js  refreshes the committed real-circuit test fixture
 test/
   CompositionRegistry.test.js
   CompositionGate.test.js
   TapeOutV2Adapter.test.js  10 tests incl. differential decode on real circuits
+  RefClosure.test.js         4 offline parser unit tests
   decoder.js                independent JS TAP-02 decoder (test oracle)
   fixtures/xlayer-circuits.json  9 circuits fetched via eth_call on X Layer
 dashboard/
@@ -216,9 +223,10 @@ contract's ABI instead.
 ```bash
 npm install
 npm run build     # compiles contracts -> build/contracts.json
-npm test           # runs the full suite (29 tests) against a local EVM
+npm test           # runs the full suite (33 tests) against a local EVM
 npm run demo        # runs the 5-step composability scenario
 npm run verify:xlayer  # LIVE cross-check against real X Layer circuits (needs network)
+npm run verify:refs    # LIVE recursive REF-closure cross-check (needs network)
 ```
 
 ## Using the real adapter on X Layer
@@ -286,6 +294,9 @@ X Layer integrate, not a standalone consumer product.
 - [x] Confirm a real adapter against the real processor ABI (`eth_call` on 436
       processors; `npm run verify:xlayer` cross-checks decoded gate counts
       against `circuitInfo()` on 9 live circuits)
+- [x] Recursive REF closure verified against live X Layer (`npm run verify:refs`
+      reproduces a real REF circuit's gate count by walking its target).
+      On-chain transitive bound remains a documented limitation.
 - [ ] Deploy all four contracts to X Layer (testnet first, then mainnet) —
       BLOCKED: no `PRIVATE_KEY` in this environment
 - [ ] Deploy `TapeOutV2Adapter`, call `setAdapter` for a real processor, and
@@ -297,5 +308,5 @@ X Layer integrate, not a standalone consumer product.
       attestation-fee revenue model
 - [ ] Submit processor contract address + circuit ID (or access link) via the
       official Google Form before Dec 7, 2026
-- [ ] Stretch: recursive REF dependency verification (walk REF targets from
-      `netlist()` bytes and check transitively), now that TAP-02 is live
+- [ ] Stretch: on-chain recursive REF verification (walk REF targets from
+      `netlist()` bytes inside a Solidity adapter with bounded depth)
