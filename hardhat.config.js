@@ -1,4 +1,10 @@
-require("@nomicfoundation/hardhat-toolbox");
+// The toolbox registers plugins and needs a live HardhatContext. The deploy
+// scripts load this file from plain Node, where the import throws HH5.
+try {
+  require("@nomicfoundation/hardhat-toolbox");
+} catch (e) {
+  if (e?.number !== 5) throw e; // HH5 = no context: expected outside Hardhat
+}
 require("dotenv").config();
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY || "0x" + "11".repeat(32);
