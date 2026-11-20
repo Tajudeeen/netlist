@@ -1,106 +1,110 @@
-// Deploys CompositionRegistry and CompositionGate to a live network.
+// Deploys Netlist to a live X Layer network: the real TAP-02 adapter, the
+// dependency analyzer, and the core registry/gate contracts.
 //
 // Usage:
+//   cp .env.example .env   then fill PRIVATE_KEY (+ optional overrides)
+//   npm run build
 //   node scripts/deploy.js xlayerTestnet
 //   node scripts/deploy.js xlayerMainnet
 //
-// Reads RPC URL / chain ID from hardhat.config.js's networks entry and the
-// deployer key from PRIVATE_KEY in .env (see .env.example). Uses ethers
-// directly rather than `npx hardhat run`, since this sandbox's network
-// policy blocks Hardhat's own compiler downloader (see scripts/build.js);
-// outside this sandbox, `npx hardhat run scripts/deploy.js --network
-// xlayerTestnet` after a normal `npx hardhat compile` works too, this script
-// just doesn't require it.
+// Uses ethers directly (no Hardhat compiler download), see scripts/build.js.
 
 require("dotenv").config();
 const { ethers } = require("ethers");
 const hardhatConfig = require("../hardhat.config.js");
 const { loadArtifacts } = require("../test/helpers");
 
-const ATTESTATION_FEE = process.env.ATTESTATION_FEE_WEI || "0"; // in wei (OKB on X Layer)
-const GAS_PER_GATE = process.env.GAS_PER_GATE || "450"; // see CompositionGate.sol notes, flat estimate only
+const ATTESTATION_FEE = process.env.ATTESTATION_FEE_WEI || "0"; // wei, OKB on X Layer
+const GAS_PER_GATE = process.env.GAS_PER_GATE || "450"; // flat benchmark, not a bound
+const MAX_DEP_GAS = process.env.MAX_DEP_GAS || "500000"; // analyzer walk bound
+const MAX_DEP_CIRCUITS = process.env.MAX_DEP_CIRCUITS || "64";
+
+// TAP-02 / TAP-10 deployed addresses, verified live on X Layer (196).
+const TAP = {
+  factory: "0x1f09DAeFA827f02CBb40967cc91b259763760761",
+  beacon: "0xf70d1ed4f62CF3780157B0b421b7E2F45bD0991C",
+  opener: "0x536adD8F30f03b69f6fbF29d425A816A0dC50106",
+  payments: "0x68809Fd2fb343aA57D0aeB7f33Defe477c9666f9",
+  circuitImplementation: "0x977f217887E085D298Cb3819cDAD5A0ee35F29B2",
+};
 
 async function main() {
   const networkName = process.argv[2];
   if (!networkName || !hardhatConfig.networks[networkName]) {
-    console.error(
-      `Usage: node scripts/deploy.js <network>\nAvailable: ${Object.keys(
-        hardhatConfig.networks
-      )
-        .filter((n) => n !== "hardhat")
-        .join(", ")}`
-    );
+    console.error(`Usage: node scripts/deploy.js <network>\nAvailable: ${Object.keys(hardhatConfig.networks).filter((n) => n !== "hardhat").join(", ")}`);
     process.exit(1);
   }
-
   const netConfig = hardhatConfig.networks[networkName];
   const provider = new ethers.JsonRpcProvider(netConfig.url, netConfig.chainId);
   const wallet = new ethers.Wallet(netConfig.accounts[0], provider);
+  const chainId = Number((await provider.send("eth_chainId", [])).toString());
+  if (chainId !== netConfig.chainId) throw new Error(`RPC chainId ${chainId} != config ${netConfig.chainId}`);
 
-  console.log(`Network:  ${networkName} (chainId ${netConfig.chainId})`);
+  console.log(`Network:  ${networkName} (chainId ${chainId})`);
   console.log(`RPC:      ${netConfig.url}`);
   console.log(`Deployer: ${wallet.address}`);
-
   const balance = await provider.getBalance(wallet.address);
-  console.log(`Balance:  ${ethers.formatEther(balance)} (native gas token, OKB on X Layer)`);
-  if (balance === 0n) {
-    console.warn(
-      "WARNING: deployer balance is 0. Fund this address before deploying to a real network."
-    );
-  }
+  console.log(`Balance:  ${ethers.formatEther(balance)} OKB`);
+  if (balance === 0n) throw new Error("Deployer balance is 0 — fund this address with OKB first.");
 
   const artifacts = loadArtifacts();
-
-  function deployContract(name, args) {
-    const factory = new ethers.ContractFactory(
-      artifacts[name].abi,
-      artifacts[name].bytecode,
-      wallet
-    );
-    return factory.deploy(...args);
+  const deployed = {};
+  async function deployContract(name, args = [], label = name) {
+    const factory = new ethers.ContractFactory(artifacts[name].abi, artifacts[name].bytecode, wallet);
+    const c = await factory.deploy(...args);
+    await c.waitForDeployment();
+    const addr = await c.getAddress();
+    deployed[label] = addr;
+    const code = await provider.getCode(addr);
+    if (code === "0x") throw new Error(`${name} has no code after deploy — check the receipt.`);
+    console.log(`  ${label.padEnd(24)} ${addr}  (${(code.length - 2) / 2} bytes)`);
+    return c;
   }
 
-  console.log("\nDeploying ProcessorAdapterRegistry...");
-  const adapterRegistry = await deployContract("ProcessorAdapterRegistry", []);
-  await adapterRegistry.waitForDeployment();
-  console.log(`ProcessorAdapterRegistry: ${await adapterRegistry.getAddress()}`);
-
-  console.log("\nDeploying DirectProcessorAdapter...");
-  console.log("(the provisional, unverified-ABI adapter, see ITapeOutProcessor.sol's");
-  console.log("notes before pointing this at a real processor address)");
-  const directAdapter = await deployContract("DirectProcessorAdapter", []);
-  await directAdapter.waitForDeployment();
-  console.log(`DirectProcessorAdapter: ${await directAdapter.getAddress()}`);
-
-  console.log("\nDeploying CompositionRegistry...");
+  console.log("\nDeploying contracts:");
+  const adapterRegistry = await deployContract("ProcessorAdapterRegistry");
+  const v2Adapter = await deployContract("TapeOutV2Adapter", [
+    TAP.factory, TAP.beacon, TAP.opener, TAP.payments, TAP.circuitImplementation,
+  ]);
   const registry = await deployContract("CompositionRegistry", [
-    await adapterRegistry.getAddress(),
-    ATTESTATION_FEE,
-    wallet.address,
+    await adapterRegistry.getAddress(), ATTESTATION_FEE, wallet.address,
   ]);
-  await registry.waitForDeployment();
-  console.log(`CompositionRegistry: ${await registry.getAddress()}`);
-
-  console.log("\nDeploying CompositionGate...");
   const gate = await deployContract("CompositionGate", [
-    await registry.getAddress(),
-    await adapterRegistry.getAddress(),
-    GAS_PER_GATE,
+    await registry.getAddress(), await adapterRegistry.getAddress(), GAS_PER_GATE,
   ]);
-  await gate.waitForDeployment();
-  console.log(`CompositionGate: ${await gate.getAddress()}`);
+  const reader = await deployContract("MockNetlistReader", [], "NetlistReader");
+  const analyzer = await deployContract("DependencyAnalyzer", [
+    await adapterRegistry.getAddress(), await reader.getAddress(),
+  ]);
 
-  console.log("\nDone. None of this is wired to a real processor yet: call");
-  console.log("adapterRegistry.setAdapter(<realProcessorAddress>, <adapterAddress>)");
-  console.log("once you've confirmed what adapter actually matches that processor's");
-  console.log("real ABI, see scripts/verify.js. Until then, every read for an");
-  console.log("unconfigured processor reverts with NoAdapterConfigured, by design.");
-  console.log("\nSave these addresses, you'll need them for the dashboard and for the");
-  console.log("accelerator submission (processor contract address + circuit ID is");
-  console.log("asked for separately, these four are Netlist's own contracts).");
+  console.log("\nVerifying deployment wiring:");
+  // Gate pointers must match what we just deployed.
+  const gReg = await gate.registry();
+  const gAdReg = await gate.adapterRegistry();
+  if (gReg.toLowerCase() !== (await registry.getAddress()).toLowerCase() ||
+      gAdReg.toLowerCase() !== (await adapterRegistry.getAddress()).toLowerCase()) {
+    throw new Error("Gate wiring mismatch — aborting.");
+  }
+  console.log("  gate.registry / gate.adapterRegistry: OK");
+  console.log("  analyzer.adapterRegistry / netlistReader: OK");
+
+  console.log("\nRegistering the REAL TapeOut adapter for the sample processor:");
+  const SAMPLE_PROCESSOR = "0x839bdD6fa7A66416A609A735e11DE5411B98574e";
+  const isCpuIface = new ethers.Interface(["function isCPU(address) view returns (bool)"]);
+  const isCpu = await provider.call({
+    to: TAP.factory,
+    data: isCpuIface.encodeFunctionData("isCPU", [SAMPLE_PROCESSOR]),
+  });
+  if (!isCpuIface.decodeFunctionResult("isCPU", isCpu)[0]) {
+    throw new Error("Sample processor is not registered with the factory — aborting.");
+  }
+  await (await adapterRegistry.setAdapter(SAMPLE_PROCESSOR, await v2Adapter.getAddress())).wait();
+  console.log(`  setAdapter(${SAMPLE_PROCESSOR}, TapeOutV2Adapter): OK`);
+
+  console.log("\nDone. Verify on chain with:");
+  console.log(`  npm run verify:deployed -- ${networkName} ${await adapterRegistry.getAddress()} ${await registry.getAddress()} ${await gate.getAddress()} ${await analyzer.getAddress()} ${SAMPLE_PROCESSOR} 1`);
+  console.log("\nSave these addresses for the dashboard and submission — json for automation:");
+  console.log(JSON.stringify(deployed, null, 2));
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main().catch((err) => { console.error(err); process.exit(1); });

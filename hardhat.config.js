@@ -19,7 +19,7 @@ module.exports = {
     // spends real OKB — endpoints and chain IDs on L2s do change.
     xlayerTestnet: {
       url: process.env.XLAYER_TESTNET_RPC || "https://testrpc.xlayer.tech",
-      chainId: 195,
+      chainId: 1952, // verified live 2026-11-20 (eth_chainId = 0x7a0)
       accounts: [PRIVATE_KEY],
     },
     xlayerMainnet: {
