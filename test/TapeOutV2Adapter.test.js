@@ -209,6 +209,46 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
     );
   });
 
+  it("checkCallWithDependencies denies a circuit whose REF target is incomplete", async function () {
+    const adapterRegistry = await deploy(artifacts, "ProcessorAdapterRegistry", deployer);
+    const p = await processor.getAddress();
+    await (await adapterRegistry.setAdapter(p, await adapter.getAddress())).wait();
+    const reader = await deploy(artifacts, "MockNetlistReader", deployer);
+    const analyzer = await deploy(artifacts, "DependencyAnalyzer", deployer, [
+      await adapterRegistry.getAddress(), await reader.getAddress(),
+    ]);
+    const registry = await deploy(artifacts, "CompositionRegistry", deployer, [
+      await adapterRegistry.getAddress(), 0, await deployer.getAddress(),
+    ]);
+    const gate = await deploy(artifacts, "CompositionGate", deployer, [
+      await registry.getAddress(), await adapterRegistry.getAddress(), 450,
+    ]);
+
+    // A refs circuit #99 which has no netlist on this processor.
+    await (
+      await processor.setCircuit(1, 2, 1, 0, 1,
+        "0x02" + p.slice(2).toLowerCase() + "0000000000000063" + "00" + "01",
+        await holder.getAddress())
+    ).wait();
+    await (await factory.setCPU(p, true)).wait();
+    await (
+      await registry.connect(holder).attestAsPublisher(p, 1, 0, ethers.ZeroHash, 1, "")
+    ).wait();
+    await (await factory.setSealed(true)).wait();
+    await (await beacon.setOwner(await factory.getAddress())).wait();
+    const container = await adapter.containerOf(p, 1);
+    await (await payments.setLive(container, true)).wait();
+
+    const policy = Array.from(await gate.defaultPolicy());
+    const plain = await gate.checkCall(p, 1, policy);
+    expect(plain[0]).to.equal(true); // the direct-only check misses the risk
+
+    const deep = await gate.checkCallWithDependencies(p, 1, policy,
+      await analyzer.getAddress(), 8, 32);
+    expect(deep[0]).to.equal(false);
+    expect(deep[1]).to.equal("dep-missing");
+  });
+
   it("works unchanged as an IProcessorAdapter for CompositionRegistry", async function () {
     // Register the real adapter for the processor and run a publisher
     // attestation + gate check through the untouched core contracts.

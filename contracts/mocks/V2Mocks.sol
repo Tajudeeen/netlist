@@ -46,6 +46,19 @@ contract MockProcessorV2 is ITapeOutProcessorV2 {
     }
 }
 
+/// @notice Exposes raw TAP-02 netlist bytes from a MockProcessorV2 to the
+/// DependencyAnalyzer, which takes a separate INetlistReader by design.
+contract MockNetlistReader {
+    function netlist(address processor, uint256 tokenId) external view returns (bytes memory) {
+        return MockProcessorV2(processor).netlist(tokenId);
+    }
+
+    function circuitExists(address processor, uint256 tokenId) external view returns (bool) {
+        (, uint32 nOut, , ) = MockProcessorV2(processor).circuitInfo(tokenId);
+        return nOut != 0;
+    }
+}
+
 /// @notice Minimal stand-ins for the TAP-10 companion contracts the adapter
 /// reads. Each exposes only the function the adapter calls.
 contract MockFactoryV2 {

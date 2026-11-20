@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {IProcessorAdapter} from "./interfaces/IProcessorAdapter.sol";
 import {ProcessorAdapterRegistry} from "./ProcessorAdapterRegistry.sol";
 import {CompositionRegistry} from "./CompositionRegistry.sol";
+import {DependencyAnalyzer} from "./DependencyAnalyzer.sol";
 
 /// @title CompositionGate
 /// @notice Pre-call composability check for TapeOut circuits. A container (or
@@ -140,6 +141,8 @@ contract CompositionGate {
     /// @return reason Machine-readable reason when denied, empty when allowed.
     /// One of: "no-attestation", "stale", "gas-estimate", "deps-count",
     /// "risk-tier", "unsealed", "container-dead", "no-audit", "audit-stale".
+    /// checkCallWithDependencies() adds "dep-cycle", "dep-missing",
+    /// "dep-unbounded" for incomplete REF closures.
     function checkCall(
         address processor,
         uint256 tokenId,
@@ -226,6 +229,43 @@ contract CompositionGate {
                 rejectUnattested: true,
                 requireAuditorReview: false
             });
+    }
+
+    /// @notice Same checkCall policy, PLUS a bounded walk of the circuit's
+    /// REF dependencies. Rejects when the closure is incomplete (cycle,
+    /// missing target, or caller-set limits exceeded) — a composing caller
+    /// that needs transitive guarantees uses this instead of checkCall().
+    /// Deliberately a separate method: checkCall() stays cheap and its ABI
+    /// unchanged for existing integrations.
+    function checkCallWithDependencies(
+        address processor,
+        uint256 tokenId,
+        GatePolicy calldata policy,
+        address analyzerAddress,
+        uint32 maxDepth,
+        uint32 maxCircuits
+    ) external view returns (bool allowed, string memory reason) {
+        (allowed, reason) = checkCall(processor, tokenId, policy);
+        if (!allowed) return (allowed, reason);
+
+        DependencyAnalyzer.DependencyReport memory dep =
+            DependencyAnalyzer(analyzerAddress).analyze(
+                processor, tokenId, maxDepth, maxCircuits
+            );
+        if (dep.cycleDetected) return (false, "dep-cycle");
+        if (dep.missingTarget) return (false, "dep-missing");
+        if (dep.truncated) return (false, "dep-unbounded");
+
+        // Structural completeness is not enough: each reached dependency
+        // must itself satisfy the policy. This is what makes a stale
+        // downstream attestation propagate to the parent composition.
+        for (uint256 i = 0; i < dep.depCount; i++) {
+            (bool depAllowed, string memory depReason) = checkCall(
+                dep.dependencies[i].processor, dep.dependencies[i].tokenId, policy
+            );
+            if (!depAllowed) return (false, depReason);
+        }
+        return (true, "");
     }
 
     function setGasPerGate(uint256 newValue) external onlyOwner {
