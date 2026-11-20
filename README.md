@@ -1,5 +1,7 @@
 # Netlist
 
+**Live demo: https://tajudeeen.github.io/netlist/** — reads real circuits from X Layer in-browser, no deploy key needed.
+
 A composability gate for TapeOut circuits on X Layer. Built for X Layer
 TapeOut Accelerate.
 
