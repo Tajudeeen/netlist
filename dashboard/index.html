@@ -3,553 +3,65 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Netlist — See what a circuit actually is</title>
-<style>
-  :root {
-    --bg: #0b0e14;
-    --bg-soft: #111620;
-    --panel: #151b26;
-    --panel-2: #1b2230;
-    --border: #293141;
-    --border-hi: #3a465c;
-    --text: #e8eef7;
-    --muted: #96a2b6;
-    --faint: #5f6b80;
-    --accent: #54e3c2;
-    --accent-2: #7aa2ff;
-    --ok: #4ade80;
-    --bad: #fb7185;
-    --warn: #fbbf24;
-    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    color-scheme: dark;
-  }
-  * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
-  body {
-    margin: 0;
-    background:
-      radial-gradient(900px 500px at 78% -8%, rgba(84,227,194,.09), transparent 60%),
-      radial-gradient(700px 420px at 8% 4%, rgba(122,162,255,.08), transparent 60%),
-      var(--bg);
-    color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
-    line-height: 1.55;
-    -webkit-font-smoothing: antialiased;
-  }
-  a { color: inherit; text-decoration: none; }
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
-
-  /* ---- header ---- */
-  header {
-    position: sticky; top: 0; z-index: 20;
-    backdrop-filter: blur(14px);
-    background: rgba(11,14,20,.78);
-    border-bottom: 1px solid var(--border);
-  }
-  .bar { display: flex; align-items: center; gap: 16px; min-height: 64px; flex-wrap: wrap; }
-  .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: -.02em; font-size: 18px; }
-  .brand .mark {
-    width: 28px; height: 28px; border-radius: 8px;
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    box-shadow: 0 0 24px rgba(84,227,194,.25);
-    display: grid; place-items: center; color: #06110e; font-size: 15px;
-  }
-  .brand small { color: var(--faint); font-weight: 600; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
-  nav { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
-  nav a {
-    padding: 8px 12px; border-radius: 8px; color: var(--muted);
-    font-size: 14px; font-weight: 600;
-  }
-  nav a:hover, nav a.active { color: var(--text); background: var(--panel); }
-  .netpill {
-    display: inline-flex; align-items: center; gap: 7px;
-    padding: 6px 11px; border: 1px solid var(--border); border-radius: 999px;
-    font: 600 12px var(--mono); color: var(--muted); background: var(--panel);
-  }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
-
-  /* ---- hero ---- */
-  .hero { padding: 66px 0 30px; }
-  .eyebrow {
-    display: inline-flex; align-items: center; gap: 8px;
-    font: 600 12px var(--mono); letter-spacing: .1em; text-transform: uppercase;
-    color: var(--accent); border: 1px solid rgba(84,227,194,.3);
-    background: rgba(84,227,194,.06); padding: 6px 12px; border-radius: 999px;
-  }
-  .hero h1 {
-    font-size: clamp(34px, 6vw, 60px); line-height: 1.05;
-    letter-spacing: -.035em; margin: 20px 0 16px; font-weight: 850;
-  }
-  .hero h1 .g {
-    background: linear-gradient(100deg, var(--accent), var(--accent-2));
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-  }
-  .hero p.lead { font-size: clamp(16px, 2.2vw, 19px); color: var(--muted); max-width: 720px; margin: 0; }
-  .hero p.lead code { font-family: var(--mono); color: var(--accent); font-size: .9em; }
-  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 26px; }
-  .btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: 9px;
-    padding: 12px 20px; border-radius: 10px; font-weight: 700; font-size: 14px;
-    border: 1px solid transparent; cursor: pointer; min-height: 44px;
-  }
-  .btn.primary { background: linear-gradient(100deg, var(--accent), #46c9dd); color: #06110e; }
-  .btn.primary:hover { filter: brightness(1.07); }
-  .btn.ghost { background: var(--panel); border-color: var(--border-hi); color: var(--text); }
-  .btn.ghost:hover { border-color: var(--accent); }
-  .btn:disabled { opacity: .55; cursor: default; }
-  .btn.sm { padding: 8px 14px; font-size: 13px; min-height: 40px; }
-
-  /* ---- sections ---- */
-  section { padding: 34px 0; }
-  .sec-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
-  .sec-head h2 { font-size: 23px; margin: 0; letter-spacing: -.02em; }
-  .sec-head p { margin: 6px 0 0; color: var(--muted); font-size: 14px; max-width: 680px; }
-  .kicker { font: 600 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--faint); }
-
-  /* ---- live explorer ---- */
-  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
-  .field { display: flex; flex-direction: column; gap: 6px; }
-  .field label { font: 600 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
-  input, select {
-    background: var(--panel); border: 1px solid var(--border-hi); color: var(--text);
-    border-radius: 9px; padding: 12px; font: 14px var(--mono); min-width: 0;
-    min-height: 44px;
-  }
-  input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(84,227,194,.12); }
-  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-  .card {
-    background: linear-gradient(180deg, var(--panel), var(--bg-soft));
-    border: 1px solid var(--border); border-radius: 14px; padding: 18px;
-    position: relative; overflow: hidden;
-  }
-  .card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 2px; background: linear-gradient(90deg, var(--accent), transparent); opacity: .5; }
-  .card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-  .card h3 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
-  .card .addr { font: 12px var(--mono); color: var(--faint); margin-top: 3px; }
-  .chip { font: 700 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; padding: 4px 8px; border-radius: 6px; white-space: nowrap; }
-  .chip.green { color: var(--ok); background: rgba(74,222,128,.1); border: 1px solid rgba(74,222,128,.25); }
-  .chip.amber { color: var(--warn); background: rgba(251,191,36,.1); border: 1px solid rgba(251,191,36,.25); }
-  .chip.blue { color: var(--accent-2); background: rgba(122,162,255,.1); border: 1px solid rgba(122,162,255,.25); }
-  .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 16px 0 0; }
-  .stat { background: var(--panel-2); border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; }
-  .stat .k { font: 600 10px var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
-  .stat .v { font: 700 21px var(--mono); margin-top: 3px; letter-spacing: -.02em; }
-  .stat .v.small { font-size: 15px; overflow-wrap: anywhere; }
-  .netlist-line {
-    margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border);
-    font: 11px var(--mono); color: var(--muted); overflow-wrap: anywhere;
-  }
-  .netlist-line b { color: var(--faint); font-weight: 600; }
-  .card .more { margin-top: 12px; }
-  .verify-strip {
-    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    margin-top: 16px; padding: 12px 14px; border-radius: 10px;
-    background: rgba(74,222,128,.06); border: 1px solid rgba(74,222,128,.2);
-    color: var(--muted); font-size: 13px;
-  }
-  .verify-strip b { color: var(--ok); }
-
-  /* ---- layers ---- */
-  .layers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-  .layer { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
-  .layer .num { font: 800 12px var(--mono); color: var(--accent); }
-  .layer h3 { margin: 8px 0 8px; font-size: 17px; }
-  .layer p { margin: 0; color: var(--muted); font-size: 14px; }
-  .layer .tag { display: inline-block; margin-top: 12px; font: 600 11px var(--mono); color: var(--faint); border-top: 1px solid var(--border); padding-top: 10px; }
-
-  /* ---- gate status (optional) ---- */
-  .status-grid { display: grid; grid-template-columns: 300px 1fr; gap: 16px; }
-  .form-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
-  .form-panel .field { margin-bottom: 12px; }
-  .form-panel input { width: 100%; }
-  .notice {
-    font-size: 12px; color: var(--warn); background: rgba(251,191,36,.07);
-    border: 1px solid rgba(251,191,36,.2); border-radius: 8px; padding: 10px 12px; margin-bottom: 14px;
-  }
-  .panel-view { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px; min-height: 120px; }
-  .row { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
-  .row:last-child { border-bottom: none; }
-  .row .label { color: var(--muted); }
-  .val { font-family: var(--mono); overflow-wrap: anywhere; text-align: right; }
-  .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
-  .layer-title { font: 700 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); margin: 18px 0 4px; }
-  .layer-title:first-child { margin-top: 0; }
-  .err { color: var(--bad); margin-top: 12px; font-size: 13px; white-space: pre-wrap; }
-  .placeholder { color: var(--faint); font-size: 14px; }
-
-  /* ---- footer ---- */
-  footer { border-top: 1px solid var(--border); margin-top: 40px; padding: 26px 0 40px; color: var(--faint); font-size: 13px; }
-  footer a { color: var(--muted); border-bottom: 1px dotted var(--faint); }
-  .honest { max-width: 780px; }
-  .honest b { color: var(--muted); }
-
-  .toast {
-    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(20px);
-    background: var(--panel-2); border: 1px solid var(--border-hi); border-radius: 10px;
-    padding: 10px 16px; font-size: 13px; opacity: 0; pointer-events: none; transition: .25s; z-index: 50;
-    box-shadow: 0 10px 34px rgba(0,0,0,.4);
-  }
-  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-  .spin { animation: sp 1s linear infinite; display: inline-block; }
-  @keyframes sp { to { transform: rotate(360deg); } }
-
-  @media (max-width: 880px) {
-    .grid { grid-template-columns: repeat(2, 1fr); }
-    .layers { grid-template-columns: 1fr; }
-    .status-grid { grid-template-columns: 1fr; }
-  }
-  @media (max-width: 600px) {
-    .bar { padding: 10px 0; gap: 10px; }
-    .brand small { display: none; }
-    .netpill { display: none; }
-    nav { width: 100%; margin-left: 0; justify-content: space-between; }
-    nav a { flex: 1; text-align: center; padding: 9px 6px; }
-    .hero { padding: 44px 0 20px; }
-    .grid { grid-template-columns: 1fr; }
-    .cta-row .btn { width: 100%; }
-    .toolbar .field, .toolbar .btn { flex: 1 1 100%; }
-    .toolbar input, .toolbar select, .toolbar button { width: 100%; min-height: 44px; }
-    .sec-head .btn.sm { min-height: 44px; }
-    .stat .v { font-size: 18px; }
-  }
-</style>
+<meta name="theme-color" content="#f5f3ec" />
+<meta name="description" content="Netlist — a composability pre-flight check for TapeOut circuits on X Layer. Reads the netlist itself, not a claim about it." />
+<title>Netlist — see what a circuit actually is</title>
+<link rel="stylesheet" href="shared.css" />
 </head>
 <body>
-<header>
-  <div class="wrap bar">
-    <div class="brand"><span class="mark">N</span> NETLIST <small>circuit transparency</small></div>
-    <span class="netpill"><span class="dot"></span> X Layer · 196</span>
-    <nav>
-      <a href="#explorer" class="active">Explorer</a>
-      <a href="#layers">How it works</a>
-      <a href="#status">Gate status</a>
-    </nav>
+<div id="site-header"></div>
+<main>
+  <div class="splash">
+    <div>
+      <div class="kicker">TapeOut × X Layer · live instrument</div>
+      <h1>See what a circuit <em>actually is.</em></h1>
+      <p class="lede">
+        TapeOut circuits are literal on-chain netlists — NAND, LATCH and REF records,
+        not opaque bytecode. Netlist reads those bytes from chain 196 and derives the
+        facts you would otherwise trust blind: gate count, depth, and a gas estimate.
+      </p>
+      <div class="actions">
+        <a class="btn" href="explorer.html">Open the live explorer →</a>
+        <a class="btn ghost" href="how-it-works.html">How it works</a>
+      </div>
+    </div>
+    <aside class="splash-aside">
+      <span class="num">436</span>
+      <div class="kicker">processors live on X Layer</div>
+      <p>Read from the TapeOut factory at <code>0x1f09DAeF…</code> — not a hardcoded fixture.</p>
+      <div class="rule"></div>
+      <div class="kicker">what you can check right now</div>
+      <p>Gate count · circuit depth · netlist size · REF composition · processor registration · seal evidence · container activation.</p>
+      <div class="rule"></div>
+      <p class="muted">No deploy key, no wallet connection, no signup. One plain <code>eth_call</code> per question.</p>
+    </aside>
   </div>
-</header>
-
-<main class="wrap">
-  <div class="hero">
-    <span class="eyebrow"><span class="dot"></span> LIVE ON X LAYER MAINNET</span>
-    <h1>See what a circuit <span class="g">actually is.</span></h1>
-    <p class="lead">
-      TapeOut circuits are literal on-chain netlists — NAND / LATCH / REF records, not opaque bytecode.
-      Netlist reads them <em>directly from chain 196</em> and derives the facts you'd otherwise trust blind:
-      gate count, depth, and a gas estimate. No indexer, no deploy key, no server.
-    </p>
-    <div class="cta-row">
-      <button class="btn primary" id="heroLoad">Explore live circuits →</button>
-      <a class="btn ghost" href="#layers">See the three layers</a>
-    </div>
+  <div class="ticker" id="ticker">
+    <span>Chain <b>196</b></span>
+    <span>Factory <b id="tCpuCount">reading…</b> processors</span>
+    <span>Adapter <b>TAP-02 / TAP-10</b></span>
+    <span>Tests <b>33 passing</b></span>
+    <span>Decoder <b>0 mismatches</b></span>
   </div>
-
-  <section id="explorer">
-    <div class="sec-head">
-      <div>
-        <div class="kicker">Layer 1 · derived, trustless</div>
-        <h2>Live circuit explorer</h2>
-        <p>Real processors from the TapeOut factory, read via <code style="font-family:var(--mono);color:var(--accent)">eth_call</code>
-           and decoded in your browser with the same logic the on-chain adapter uses. Cross-checked against each circuit's own <code style="font-family:var(--mono)">circuitInfo()</code>.</p>
-      </div>
-      <button class="btn ghost sm" id="refreshBtn">↻ Refresh</button>
-    </div>
-
-    <div class="toolbar">
-      <div class="field">
-        <label for="rpcUrl">RPC URL</label>
-        <input id="rpcUrl" value="https://rpc.xlayer.tech" spellcheck="false" />
-      </div>
-      <div class="field" style="flex:0 0 110px">
-        <label for="procStart">First processor</label>
-        <input id="procStart" type="number" value="0" min="0" />
-      </div>
-      <div class="field" style="flex:0 0 90px">
-        <label for="procCount">Processors</label>
-        <input id="procCount" type="number" value="3" min="1" max="12" />
-      </div>
-      <div class="field" style="flex:0 0 90px">
-        <label for="idCount">Circuits each</label>
-        <input id="idCount" type="number" value="3" min="1" max="10" />
-      </div>
-      <button class="btn primary" id="loadBtn">Load circuits</button>
-    </div>
-
-    <div id="explorerStatus" class="placeholder">Press <b>Load circuits</b> to read real processors from X Layer. This runs entirely in your browser — nothing is cached on a server.</div>
-    <div class="grid" id="cards" style="margin-top:16px"></div>
-    <div class="verify-strip" id="verifyStrip" style="display:none">
-      <span class="chip green" id="verifyChip">VERIFIED</span>
-      <span id="verifyText"></span>
-    </div>
-  </section>
-
-  <section id="layers">
-    <div class="sec-head">
-      <div>
-        <div class="kicker">The product idea</div>
-        <h2>Three layers of fact, kept separate</h2>
-        <p>Not collapsed into one “is this safe” boolean. Each claim carries its own provenance and its own trust assumption.</p>
-      </div>
-    </div>
-    <div class="layers">
-      <div class="layer">
-        <div class="num">01 / DERIVED</div>
-        <h3>Read from the netlist</h3>
-        <p>Gate count, circuit depth, and a flat gas estimate are decoded from the circuit's actual on-chain netlist bytes — trustless, because the facts are computed, not claimed.</p>
-        <div class="tag">trust: math + chain</div>
-      </div>
-      <div class="layer">
-        <div class="num">02 / DECLARED</div>
-        <h3>Attested by humans</h3>
-        <p>Publisher and auditor attestations live in separate, versioned tracks. Re-attesting increments a counter, and every read checks the current netlist hash for staleness.</p>
-        <div class="tag">trust: named attester</div>
-      </div>
-      <div class="layer">
-        <div class="num">03 / NETWORK</div>
-        <h3>Live, never cached</h3>
-        <p>Processor seal status and container activation are re-read at call time. Seal requires factory seal + beacon pin + factory ownership, shown as three independent claims.</p>
-        <div class="tag">trust: live RPC</div>
-      </div>
-    </div>
-  </section>
-
-  <section id="status">
-    <div class="sec-head">
-      <div>
-        <div class="kicker">Optional · post-deploy</div>
-        <h2>CompositionGate status</h2>
-        <p>Read a full three-layer <code style="font-family:var(--mono)">statusReport()</code> from a deployed Netlist gate. This mode is off until the gate is deployed on X Layer — see the honest note.</p>
-      </div>
-    </div>
-    <div class="status-grid">
-      <div class="form-panel">
-        <div class="notice"><b>Not deployed yet.</b> Netlist contracts have no deploy key in this repo. This form works against any address you point it at — it is here so the live proof is one paste away after deployment, not a simulation.</div>
-        <div class="field"><label for="gateAddr">CompositionGate address</label><input id="gateAddr" placeholder="0x..." spellcheck="false" /></div>
-        <div class="field"><label for="processorAddr">Processor address</label><input id="processorAddr" placeholder="0x..." spellcheck="false" /></div>
-        <div class="field"><label for="tokenId">Circuit token ID</label><input id="tokenId" value="1" /></div>
-        <button class="btn ghost" id="statusBtn" style="width:100%;margin-top:6px">Check status</button>
-      </div>
-      <div class="panel-view" id="panel"><div class="placeholder">No gate queried yet. Fill the fields and press <b>Check status</b>.</div></div>
-    </div>
-  </section>
 </main>
-
-<footer>
-  <div class="wrap honest">
-    <b>Honest boundaries.</b> This page reads X Layer directly from the RPC you provide — one operator's view, not a quorum. It verifies the <em>read logic</em> of Netlist's TAP-02 adapter against live circuits; it does <b>not</b> claim a Netlist CompositionGate exists on chain. Netlist's checks are advisory pre-flight checks a composing contract calls voluntarily, not protocol-enforced guarantees. REF circuits hide internal depth behind a pointer; gas is a flat benchmark, not a proven bound.
-    Built for <a href="https://www.xlayer.tech/" target="_blank" rel="noopener">X Layer</a> TapeOut Accelerate. Source: <a href="https://github.com/Tajudeeen/netlist" target="_blank" rel="noopener">github.com/Tajudeeen/netlist</a>.
-  </div>
-</footer>
-
-<div class="toast" id="toast"></div>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+<div id="site-footer"></div>
+<script src="shared.js"></script>
 <script>
-  const RISK_LABELS = ["None", "Low", "Moderate", "High"];
-  const FACTORY = "0x1f09DAeFA827f02CBb40967cc91b259763760761";
-  const IFACE = new ethers.Interface([
-    "function cpuCount() view returns (uint256)",
-    "function cpuAt(uint256) view returns (address)",
-    "function circuitInfo(uint256) view returns (uint32 nIn, uint32 nOut, uint32 nState, uint32 gateCount)",
-    "function netlist(uint256) view returns (bytes)",
-    "function ownerOf(uint256) view returns (address)",
-    "function name() view returns (string)",
-    "function symbol() view returns (string)",
-  ]);
-  const GATE_ABI = [
-    "function statusReport(address processor, uint256 tokenId) view returns (tuple(uint32 gateCount, uint32 depth, uint256 estimatedGas, bool hasPublisherAttestation, bool publisherAttestationStale, uint8 publisherRiskTier, uint32 declaredDepsCount, bool hasAuditorAttestation, bool auditorAttestationStale, uint8 auditorRiskTier, bool processorSealed, address container, bool containerLive))"
-  ];
-
-  function toast(msg) {
-    const t = document.getElementById("toast");
-    t.textContent = msg; t.classList.add("show");
-    clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2600);
-  }
-
-  // Browser port of test/decoder.js — the independent oracle that agrees with
-  // the Solidity TapNetlist library. Kept as a literal translation so agreement
-  // with on-chain circuitInfo() remains meaningful.
-  function decodeTapNetlist(hex, nIn) {
-    const b = ethers.getBytes(hex);
-    let pos = 0, signals = 2 + nIn, gateCount = 0, depth = 0, refCount = 0, hasForwardLatch = false, hasRef = false;
-    const best = new Array(signals).fill(0);
-    const need = n => { if (b.length - pos < n) throw new Error("truncated record"); };
-    const u24 = p => (b[p] << 16) | (b[p + 1] << 8) | b[p + 2];
-    while (pos < b.length) {
-      const op = b[pos++];
-      if (op === 0x00) {
-        need(6); const ai = u24(pos); const bi = u24(pos + 3); pos += 6;
-        if (ai >= signals || bi >= signals) throw new Error("NAND: future signal");
-        const d = Math.max(best[ai], best[bi]) + 1; best.push(d); signals++; gateCount++; depth = Math.max(depth, d);
-      } else if (op === 0x01) {
-        need(3); const di = u24(pos); pos += 3;
-        if (di >= signals) hasForwardLatch = true;
-        const d = (di < best.length ? best[di] : 0) + 1; best.push(d); signals++; gateCount++; depth = Math.max(depth, d);
-      } else if (op === 0x02) {
-        need(30); const nIns = b[pos + 28]; const nOuts = b[pos + 29]; const insStart = pos + 30;
-        need(nIns * 3); if (nOuts === 0) throw new Error("REF: no outputs");
-        let parent = 0;
-        for (let i = 0; i < nIns; i++) { const idx = u24(insStart + i * 3); if (idx >= signals) throw new Error("REF: future signal"); parent = Math.max(parent, best[idx]); }
-        pos = insStart + nIns * 3;
-        const d = parent + 1; for (let i = 0; i < nOuts; i++) best.push(d);
-        signals += nOuts; hasRef = true; refCount++; depth = Math.max(depth, d);
-      } else throw new Error("bad opcode");
-    }
-    return { gateCount, depth, signals, refCount, hasForwardLatch, hasRef };
-  }
-
-  const short = a => a ? a.slice(0, 8) + "…" + a.slice(-6) : "—";
-  const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-
-  async function loadCircuits() {
-    const btn = document.getElementById("loadBtn");
-    const status = document.getElementById("explorerStatus");
-    const cards = document.getElementById("cards");
-    const strip = document.getElementById("verifyStrip");
-    const rpcUrl = document.getElementById("rpcUrl").value.trim();
-    const start = Math.max(0, parseInt(document.getElementById("procStart").value, 10) || 0);
-    const pCount = Math.min(12, Math.max(1, parseInt(document.getElementById("procCount").value, 10) || 3));
-    const idCount = Math.min(10, Math.max(1, parseInt(document.getElementById("idCount").value, 10) || 3));
-    cards.innerHTML = ""; strip.style.display = "none";
-    btn.disabled = true; btn.innerHTML = '<span class="spin">◌</span> Reading chain…';
-    status.className = "placeholder"; status.textContent = "Querying factory and processors on X Layer…";
-
+  Netlist.mount("home");
+  (async () => {
+    const url = "https://rpc.xlayer.tech";
     try {
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const chainId = Number(await provider.send("eth_chainId", []));
-      if (chainId !== 196) throw new Error("Expected X Layer chain 196, got " + chainId + ". Use an X Layer mainnet RPC.");
-      const block = await provider.getBlockNumber();
-      const factory = new ethers.Contract(FACTORY, IFACE, provider);
-      const cpuCount = Number(await factory.cpuCount());
-      let matched = 0, refs = 0, mismatches = 0, total = 0;
-
-      for (let p = start; p < Math.min(start + pCount, cpuCount); p++) {
-        const cpu = await factory.cpuAt(p);
-        const proc = new ethers.Contract(cpu, IFACE, provider);
-        let pName = "Processor #" + p, pSym = "";
-        try { pName = await proc.name(); } catch {}
-        try { pSym = await proc.symbol(); } catch {}
-
-        for (let id = 1; id <= idCount; id++) {
-          let info, nl, owner = null;
-          try { info = await proc.circuitInfo(id); nl = await proc.netlist(id); }
-          catch { continue; }
-          try { owner = await proc.ownerOf(id); } catch {}
-          const nIn = Number(info.nIn);
-          let d;
-          try { d = decodeTapNetlist(nl, nIn); }
-          catch (e) { d = { gateCount: 0, depth: 0, refCount: 0, hasRef: false, hasForwardLatch: false, error: e.message }; }
-          const decodedGates = d.gateCount;
-          const reported = Number(info.gateCount);
-          const ok = d.hasRef || decodedGates === reported;
-          if (d.hasRef) refs++; else if (ok) matched++; else mismatches++;
-          total++;
-
-          const gateStmt = d.hasRef
-            ? '<span class="chip amber">REF · depth hidden</span>'
-            : ok ? '<span class="chip green">MATCH</span>' : '<span class="chip bad" style="color:var(--bad)">MISMATCH</span>';
-
-          const div = document.createElement("div");
-          div.className = "card";
-          div.innerHTML = `
-            <div class="card-top">
-              <div><h3>${esc(pName)} <span style="color:var(--faint);font-weight:500">#${id}</span></h3>
-                <div class="addr">${esc(short(cpu))} · tokenId ${id}${pSym ? " · " + esc(pSym) : ""}</div></div>
-              ${gateStmt}
-            </div>
-            <div class="stats">
-              <div class="stat"><div class="k">Gates (derived)</div><div class="v">${decodedGates}</div></div>
-              <div class="stat"><div class="k">Depth (derived)</div><div class="v">${d.depth}</div></div>
-              <div class="stat"><div class="k">Reported by circuitInfo</div><div class="v">${reported}</div></div>
-              <div class="stat"><div class="k">Est. gas @450/gate</div><div class="v">${(reported * 450).toLocaleString()}</div></div>
-            </div>
-            <div class="netlist-line"><b>netlist</b> ${(nl.length - 2) / 2} bytes · <b>signals</b> ${d.signals || "—"} · <b>owner</b> ${esc(short(owner))}${d.hasForwardLatch ? " · forward LATCH→feedback" : ""}</div>
-            ${owner ? `<div class="more"><a class="chip blue" style="display:inline-block" href="https://explorer.xlayer.tech/address/${owner}" target="_blank" rel="noopener">owner on explorer ↗</a></div>` : ""}
-          `;
-          cards.appendChild(div);
-        }
+      const chain = Number(await Netlist.rpc(url, "eth_chainId", []));
+      const count = await Netlist.ethCall(url, Netlist.C.factory, Netlist.S.cpuCount);
+      if (chain === 196) {
+        document.getElementById("tCpuCount").textContent = Number(Netlist.asUint(count, 0));
+      } else {
+        document.getElementById("tCpuCount").textContent = "wrong chain";
       }
-      if (total === 0) throw new Error("No circuits read from those processors. Try a different first-processor index.");
-
-      status.className = "";
-      status.innerHTML = `<span class="chip green">LIVE</span> &nbsp; chain 196 · block ${block.toLocaleString()} · ${cpuCount} processors on factory · showing ${total} circuits from processors ${start}–${Math.min(start + pCount - 1, cpuCount - 1)}.`;
-      strip.style.display = "flex";
-      document.getElementById("verifyChip").textContent = mismatches === 0 ? "DECODE VERIFIED" : "MISMATCH FOUND";
-      document.getElementById("verifyChip").className = "chip " + (mismatches === 0 ? "green" : "amber");
-      document.getElementById("verifyText").innerHTML = `<b>${matched} non-REF circuits</b> matched the on-chain <code style="font-family:var(--mono)">circuitInfo().gateCount</code> exactly, <b>${refs}</b> were REF (depth not decodable), <b>${mismatches}</b> mismatches. Same decoder logic as the Solidity adapter in <code style="font-family:var(--mono)">test/decoder.js</code>.`;
     } catch (e) {
-      status.className = "err";
-      status.textContent = "Error: " + (e && e.message ? e.message : String(e));
-    } finally {
-      btn.disabled = false; btn.textContent = "Load circuits";
+      document.getElementById("tCpuCount").textContent = "unavailable";
     }
-  }
-
-  function setText(id, text, cls) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.textContent = text; el.className = "val" + (cls ? " " + cls : "");
-  }
-
-  async function checkStatus() {
-    const panel = document.getElementById("panel");
-    const rpcUrl = document.getElementById("rpcUrl").value.trim();
-    const gateAddr = document.getElementById("gateAddr").value.trim();
-    const processorAddr = document.getElementById("processorAddr").value.trim();
-    const tokenId = document.getElementById("tokenId").value.trim();
-    if (!rpcUrl || !gateAddr || !processorAddr || !tokenId) { panel.innerHTML = '<div class="err">Fill in all four fields.</div>'; return; }
-    panel.innerHTML = '<div class="placeholder"><span class="spin">◌</span> Querying gate…</div>';
-    try {
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const gate = new ethers.Contract(gateAddr, GATE_ABI, provider);
-      const r = await gate.statusReport(processorAddr, tokenId);
-      let h = "";
-      h += '<div class="layer-title">Layer 1 — Derived</div>';
-      h += `<div class="row"><span class="label">Gate count</span><span id="gateCount"></span></div>`;
-      h += `<div class="row"><span class="label">Depth</span><span id="depth"></span></div>`;
-      h += `<div class="row"><span class="label">Estimated gas</span><span id="estGas"></span></div>`;
-      h += '<div class="layer-title">Layer 2 — Declared</div>';
-      h += `<div class="row"><span class="label">Publisher attestation</span><span id="pubExists"></span></div>`;
-      h += `<div class="row"><span class="label">Publisher stale?</span><span id="pubStale"></span></div>`;
-      h += `<div class="row"><span class="label">Publisher risk tier</span><span id="pubRisk"></span></div>`;
-      h += `<div class="row"><span class="label">Declared deps</span><span id="depsCount"></span></div>`;
-      h += `<div class="row"><span class="label">Auditor attestation</span><span id="audExists"></span></div>`;
-      h += `<div class="row"><span class="label">Auditor stale?</span><span id="audStale"></span></div>`;
-      h += `<div class="row"><span class="label">Auditor risk tier</span><span id="audRisk"></span></div>`;
-      h += '<div class="layer-title">Layer 3 — Network</div>';
-      h += `<div class="row"><span class="label">Processor sealed?</span><span id="sealed"></span></div>`;
-      h += `<div class="row"><span class="label">Container</span><span id="container"></span></div>`;
-      h += `<div class="row"><span class="label">Container live?</span><span id="containerLive"></span></div>`;
-      panel.innerHTML = h;
-      setText("gateCount", r.gateCount.toString());
-      setText("depth", r.depth.toString());
-      setText("estGas", r.estimatedGas.toString());
-      setText("pubExists", r.hasPublisherAttestation ? "yes" : "no", r.hasPublisherAttestation ? "ok" : "bad");
-      setText("pubStale", r.hasPublisherAttestation ? (r.publisherAttestationStale ? "yes" : "no") : "n/a", r.publisherAttestationStale ? "bad" : "ok");
-      setText("pubRisk", RISK_LABELS[r.publisherRiskTier] || r.publisherRiskTier);
-      setText("depsCount", r.declaredDepsCount.toString());
-      setText("audExists", r.hasAuditorAttestation ? "yes" : "no", r.hasAuditorAttestation ? "ok" : "warn");
-      setText("audStale", r.hasAuditorAttestation ? (r.auditorAttestationStale ? "yes" : "no") : "n/a", r.auditorAttestationStale ? "bad" : "ok");
-      setText("audRisk", RISK_LABELS[r.auditorRiskTier] || r.auditorRiskTier);
-      setText("sealed", r.processorSealed ? "yes" : "no", r.processorSealed ? "ok" : "warn");
-      setText("container", r.container);
-      setText("containerLive", r.containerLive ? "yes" : "no", r.containerLive ? "ok" : "bad");
-    } catch (e) {
-      panel.innerHTML = '<div class="err">Error: ' + esc(e && e.message ? e.message : String(e)) + '</div>';
-    }
-  }
-
-  document.getElementById("loadBtn").addEventListener("click", loadCircuits);
-  document.getElementById("refreshBtn").addEventListener("click", loadCircuits);
-  document.getElementById("heroLoad").addEventListener("click", () => {
-    document.getElementById("explorer").scrollIntoView();
-    loadCircuits();
-  });
-  document.getElementById("statusBtn").addEventListener("click", checkStatus);
-
-  // nav active state
-  document.querySelectorAll("nav a").forEach(a => a.addEventListener("click", () => {
-    document.querySelectorAll("nav a").forEach(x => x.classList.remove("active"));
-    a.classList.add("active");
-  }));
+  })();
 </script>
 </body>
 </html>

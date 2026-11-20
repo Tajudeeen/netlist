@@ -22,7 +22,8 @@ Evidence, not claims. Every item below was re-run on 2026-11-20:
 | 436 real TapeOut processors exist on X Layer; factory/beacon/opener/payments code verified at the TAP-02/TAP-10 addresses | REAL | `npm run verify:xlayer` (chainId 196, eth_getCode + eth_call) |
 | `TapeOutV2Adapter` implements the real TAP-02/TAP-10 ABI and plugs into the unchanged core contracts | REAL | `npm test` (last test: full attestation → gate check) |
 | Recursive REF dependency verification | REAL (off-chain verifier) | `npm run verify:refs` — walks REF closure on live X Layer; matches `circuitInfo.gateCount` |
-| Dashboard reads real circuits directly in-browser | REAL | `dashboard/index.html` — live explorer, no gate deploy needed |
+| Dashboard reads real circuits directly in-browser | REAL | `dashboard/explorer.html` — live explorer, no gate deploy needed |
+| Multi-page site with splash, nav, and footer | REAL | `dashboard/index.html` → explorer / how-it-works / gate |
 | Netlist's own contracts deployed on X Layer | **NOT YET** — no private key in this repo | see "Deploying to X Layer" |
 | Protocol-enforced composition checks (all calls forced through the gate) | **NOT VERIFIED** — advisory only | see "Honest limitations" |
 | On-chain recursive REF verification inside the Solidity adapter | **NOT IMPLEMENTED** — off-chain verifier only | see "Honest limitations" |
@@ -198,7 +199,12 @@ test/
   decoder.js                independent JS TAP-02 decoder (test oracle)
   fixtures/xlayer-circuits.json  9 circuits fetched via eth_call on X Layer
 dashboard/
-  index.html    standalone status page, reads statusReport() from any RPC
+  index.html          splash / entry page
+  explorer.html       live circuit explorer (real X Layer reads)
+  how-it-works.html   the three layers + evidence table
+  gate.html           optional post-deploy statusReport form
+  shared.css          editorial design system (paper/lime/Georgia, square, hard shadows)
+  shared.js           shared header/footer, RPC helpers, TAP-02 decoder
 hardhat.config.js   network config (kept for reference/compatibility)
 ```
 

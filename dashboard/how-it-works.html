@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#f5f3ec" />
+<meta name="description" content="The three layers of fact Netlist checks, and exactly how each one is verified." />
+<title>How it works — Netlist</title>
+<link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+<div id="site-header"></div>
+<main>
+  <section>
+    <div class="kicker">Design</div>
+    <h1 style="font-size:clamp(34px,5vw,56px)">Three layers of fact,<br>kept separate.</h1>
+    <p class="lede">A processor being sealed and a circuit being safe are different claims. Netlist never collapses them into one "is this safe" boolean — each layer carries its own provenance and its own trust assumption.</p>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>01 · Derived</h2><p>Trust: math + chain</p></div>
+    <div class="prose">
+      <p>A TapeOut netlist is a byte string of NAND, LATCH and REF records. Because those bytes are on chain, gate count and depth can be <em>computed</em>, not claimed. The decoder walks records in a bounded two-pass parse: validate and count signals, then allocate an exact-size array and compute longest paths.</p>
+      <div class="callout">
+        <p><b>Cross-check that anyone can repeat:</b> for a non-REF circuit, the decoded gate count must equal the processor's own <code>circuitInfo(id).gateCount</code>. On the live X Layer sample, 6 of 6 non-REF circuits matched exactly, 0 mismatches.</p>
+      </div>
+      <p>REF records are a pointer to another circuit. A 31-byte REF can expand into an arbitrarily large sub-circuit, so this layer reports <code>depthIsBounded() = false</code> rather than claiming a shallow circuit. The separate <code>npm run verify:refs</code> script walks the closure off-chain and reproduces a real REF circuit's reported count.</p>
+      <div class="codeblock"><pre>circuitInfo(id) → (nIn, nOut, nState, gateCount)
+netlist(id)     → 0x00 a:u24 b:u24   NAND
+                   0x01 d:u24        LATCH
+                   0x02 cpu id nIns nOuts ins…   REF</pre></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>02 · Declared</h2><p>Trust: named attester</p></div>
+    <div class="prose">
+      <p>Publisher and auditor attestations live in separate, versioned tracks. The circuit's current holder declares intended behavior; an allowlisted independent auditor can separately review it. Re-attesting increments a version rather than overwriting history, and every read checks the live netlist hash for staleness.</p>
+      <div class="callout"><p><b>Scope, stated plainly:</b> Netlist's contracts are not deployed on X Layer (there is no deploy key in this repo), so the explorer shows declared facts as <em>unavailable</em>, never as a passing check. The gate-status page becomes live one paste after deployment.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>03 · Network</h2><p>Trust: live RPC</p></div>
+    <div class="prose">
+      <p>Processor registration, factory seal, beacon implementation, container derivation and activation are all re-read at call time. Seal is three independent claims, not one boolean: factory sealed, beacon implementation pinned, beacon owned by factory.</p>
+      <p>On live X Layer at the time of writing, the beacon's <code>owner()</code> reads <code>0x0</code>, so the TAP-10 §13.8 seal test fails closed — an unsealed processor is reported unsealed, never silently assumed safe.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>Evidence</h2><p>Verified 2026-11-20</p></div>
+    <div class="prose">
+      <table class="facts">
+        <thead><tr><th>Claim</th><th>Status</th><th>Reproduce</th></tr></thead>
+        <tbody>
+          <tr><td>20 contracts compile</td><td>REAL</td><td><code>npm run build</code></td></tr>
+          <tr><td>33 tests pass locally</td><td>REAL</td><td><code>npm test</code></td></tr>
+          <tr><td>9 real X Layer circuits decoded</td><td>REAL</td><td><code>npm run verify:xlayer</code></td></tr>
+          <tr><td>REF closure matches circuitInfo</td><td>REAL</td><td><code>npm run verify:refs</code></td></tr>
+          <tr><td>Netlist contracts on X Layer</td><td>NOT YET</td><td>needs a funded deploy key</td></tr>
+          <tr><td>Protocol-enforced composition</td><td>NOT VERIFIED</td><td>advisory pre-flight only</td></tr>
+        </tbody>
+      </table>
+      <p style="margin-top:20px"><a href="explorer.html">Open the live explorer →</a></p>
+    </div>
+  </section>
+</main>
+<div id="site-footer"></div>
+<script src="shared.js"></script>
+<script>Netlist.mount("how");</script>
+</body>
+</html>

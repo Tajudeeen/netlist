@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#f5f3ec" />
+<meta name="description" content="Read a three-layer statusReport from a deployed Netlist CompositionGate." />
+<title>Gate status — Netlist</title>
+<link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+<div id="site-header"></div>
+<main>
+  <section>
+    <div class="section-head">
+      <div>
+        <div class="kicker">Optional · post-deploy</div>
+        <h2>CompositionGate status</h2>
+      </div>
+      <p>Read a full three-layer <code>statusReport()</code> from a deployed gate. This mode is off until the gate exists on X Layer — shown honestly, not simulated.</p>
+    </div>
+
+    <div class="callout prose" style="max-width:none">
+      <p><b>Not deployed yet.</b> Netlist's contracts have no deploy key in this repository. This form queries whatever address you paste; it exists so the full gate is one paste away after deployment, not to fake a live result. Until then use the <a href="explorer.html">live explorer</a> for real derived facts.</p>
+    </div>
+
+    <div class="toolbar">
+      <div class="field">
+        <label for="rpcUrl">RPC URL</label>
+        <input id="rpcUrl" value="https://rpc.xlayer.tech" spellcheck="false" />
+      </div>
+      <div class="field">
+        <label for="gateAddr">CompositionGate address</label>
+        <input id="gateAddr" placeholder="0x…" spellcheck="false" />
+      </div>
+      <div class="field">
+        <label for="processorAddr">Processor address</label>
+        <input id="processorAddr" placeholder="0x…" spellcheck="false" />
+      </div>
+      <div class="field narrow">
+        <label for="tokenId">Circuit #ID</label>
+        <input id="tokenId" type="number" value="1" min="1" />
+      </div>
+      <button class="btn" id="checkBtn">Check status</button>
+    </div>
+
+    <div class="err" id="err" role="alert"></div>
+
+    <div id="report" hidden style="margin-top:28px">
+      <div class="section-head"><h2>Status report</h2><p id="reportMeta"></p></div>
+      <div class="rows" id="rows"></div>
+    </div>
+  </section>
+</main>
+<div id="site-footer"></div>
+<script src="shared.js"></script>
+<script>
+(function(){
+  Netlist.mount("gate");
+  const { ethCall, pad, num, short, esc } = Netlist;
+
+  // keccak256("statusReport(address,uint256)")[:4], verified against the
+  // compiled CompositionGate ABI with ethers.id() (scripts/verify.js).
+  const STATUS_SELECTOR = "0x387436f9";
+
+  async function run() {
+    const err = document.getElementById("err");
+    const report = document.getElementById("report");
+    err.textContent = ""; report.hidden = true;
+    const url = document.getElementById("rpcUrl").value.trim().replace(/\/$/, "");
+    const gate = document.getElementById("gateAddr").value.trim();
+    const proc = document.getElementById("processorAddr").value.trim();
+    const token = document.getElementById("tokenId").value.trim();
+    if (!/^0x[0-9a-fA-F]{40}$/.test(gate) ||
+        !/^0x[0-9a-fA-F]{40}$/.test(proc) ||
+        !/^\d+$/.test(token)) {
+      err.textContent = "Enter a valid gate address, processor address and integer circuit ID.";
+      return;
+    }
+    try {
+      const result = await ethCall(url, gate, STATUS_SELECTOR + pad(proc) + num(token));
+      const w = (i) => result.slice(2 + i * 64, 2 + (i + 1) * 64);
+      const u = (i) => BigInt("0x" + w(i));
+      const b = (i) => u(i) !== 0n;
+      const a = (i) => "0x" + w(i).slice(-40);
+      const RISK = ["None", "Low", "Moderate", "High"];
+      const rows = [
+        ["Gate count", u(0).toString(), ""],
+        ["Depth", u(1).toString(), ""],
+        ["Estimated gas", u(2).toString(), ""],
+        ["Publisher attestation", b(3) ? "yes" : "no", b(3) ? "ok" : "bad"],
+        ["Publisher stale", !b(3) ? "n/a" : b(4) ? "yes" : "no", b(4) ? "bad" : "ok"],
+        ["Publisher risk", RISK[Number(u(5))] || u(5).toString(), ""],
+        ["Declared deps", u(6).toString(), ""],
+        ["Auditor attestation", b(7) ? "yes" : "no", b(7) ? "ok" : "warn"],
+        ["Auditor stale", !b(7) ? "n/a" : b(8) ? "yes" : "no", b(8) ? "bad" : "ok"],
+        ["Auditor risk", RISK[Number(u(9))] || u(9).toString(), ""],
+        ["Processor sealed", b(10) ? "yes" : "no", b(10) ? "ok" : "warn"],
+        ["Container", short(a(11)), ""],
+        ["Container live", b(12) ? "yes" : "no", b(12) ? "ok" : "bad"],
+      ];
+      document.getElementById("rows").innerHTML = rows.map(([k, v, cls]) =>
+        `<div class="row"><span class="k">${k}</span><span class="v">${esc(v)}</span><span class="tag ${cls || "na"}">${cls || "fact"}</span></div>`
+      ).join("");
+      document.getElementById("reportMeta").textContent = `gate ${short(gate)} · circuit #${token}`;
+      report.hidden = false;
+    } catch (e) {
+      err.textContent = "Error: " + (e && e.message ? e.message : String(e));
+    }
+  }
+  document.getElementById("checkBtn").addEventListener("click", run);
+})();
+</script>
+</body>
+</html>

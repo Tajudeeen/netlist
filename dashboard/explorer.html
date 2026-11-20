@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#f5f3ec" />
+<meta name="description" content="Read real TapeOut circuits from X Layer and decode their netlists in your browser." />
+<title>Explorer — Netlist</title>
+<link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+<div id="site-header"></div>
+<main>
+  <section>
+    <div class="section-head">
+      <div>
+        <div class="kicker">Layer 01 · derived, trustless</div>
+        <h2>Live circuit explorer</h2>
+      </div>
+      <p>Real processors from the TapeOut factory, read via <code>eth_call</code> and decoded in your browser with the same logic as the Solidity adapter. Every non-REF gate count is cross-checked against the processor's own <code>circuitInfo()</code>.</p>
+    </div>
+
+    <div class="toolbar">
+      <div class="field">
+        <label for="rpcUrl">RPC URL</label>
+        <input id="rpcUrl" value="https://rpc.xlayer.tech" spellcheck="false" />
+      </div>
+      <div class="field narrow">
+        <label for="procStart">First processor</label>
+        <input id="procStart" type="number" value="0" min="0" />
+      </div>
+      <div class="field narrow">
+        <label for="procCount">Processors</label>
+        <input id="procCount" type="number" value="3" min="1" max="12" />
+      </div>
+      <div class="field narrow">
+        <label for="idCount">Circuits each</label>
+        <input id="idCount" type="number" value="3" min="1" max="10" />
+      </div>
+      <button class="btn" id="loadBtn">Load circuits</button>
+    </div>
+
+    <div class="err" id="err" role="alert"></div>
+    <div class="statusline" id="statusline" hidden></div>
+    <div class="cards" id="cards"></div>
+  </section>
+</main>
+<div id="site-footer"></div>
+<script src="shared.js"></script>
+<script>
+(function(){
+  Netlist.mount("explorer");
+  const { C, S, rpc, ethCall, asUint, asAddr, asBytes, short, esc, decodeTapNetlist } = Netlist;
+
+  async function loadCircuits() {
+    const btn = document.getElementById("loadBtn");
+    const err = document.getElementById("err");
+    const line = document.getElementById("statusline");
+    const cards = document.getElementById("cards");
+    err.textContent = ""; line.hidden = true; cards.innerHTML = "";
+    btn.disabled = true; btn.textContent = "Reading…";
+
+    const url = document.getElementById("rpcUrl").value.trim().replace(/\/$/, "");
+    const start = Math.max(0, parseInt(document.getElementById("procStart").value, 10) || 0);
+    const pCount = Math.min(12, Math.max(1, parseInt(document.getElementById("procCount").value, 10) || 3));
+    const idCount = Math.min(10, Math.max(1, parseInt(document.getElementById("idCount").value, 10) || 3));
+
+    try {
+      const chainId = Number(await rpc(url, "eth_chainId", []));
+      if (chainId !== 196) throw new Error(`Expected X Layer chain 196, RPC reports ${chainId}.`);
+      const block = Number(await rpc(url, "eth_blockNumber", []));
+      const cpuCount = Number(asUint(await ethCall(url, C.factory, S.cpuCount), 0));
+      let total = 0, matched = 0, refs = 0, mismatches = 0;
+
+      for (let p = start; p < Math.min(start + pCount, cpuCount); p++) {
+        const cpu = asAddr(await ethCall(url, C.factory, S.cpuAt + Netlist.num(p)));
+        for (let id = 1; id <= idCount; id++) {
+          const info = await ethCall(url, cpu, S.circuitInfo + Netlist.num(id));
+          const netlist = asBytes(await ethCall(url, cpu, S.netlist + Netlist.num(id)));
+          if (netlist === "0x") continue;
+          const nIn = Number(asUint(info, 0));
+          const d = decodeTapNetlist(netlist, nIn);
+          const reported = Number(asUint(info, 3));
+          const ok = d.hasRef || d.gateCount === reported;
+          if (d.hasRef) refs++; else if (ok) matched++; else mismatches++;
+          total++;
+
+          let holder = "—";
+          try { holder = short(asAddr(await ethCall(url, cpu, S.ownerOf + Netlist.num(id)))); } catch (e) {}
+          const tag = d.hasRef ? "REF · depth hidden" : ok ? "Match" : "Mismatch";
+          const tagCls = d.hasRef ? "warn" : ok ? "ok" : "bad";
+          const el = document.createElement("article");
+          el.className = "card";
+          el.innerHTML = `
+            <div>
+              <h3>Processor ${p} <span class="muted">#${id}</span></h3>
+              <div class="addr">${esc(short(cpu))}</div>
+            </div>
+            <span class="tag ${tagCls}">${tag}</span>
+            <div class="stat-grid">
+              <div class="stat"><div class="k">Gates derived</div><div class="v">${d.gateCount}</div></div>
+              <div class="stat"><div class="k">Depth derived</div><div class="v">${d.depth}</div></div>
+              <div class="stat"><div class="k">circuitInfo gates</div><div class="v">${reported}</div></div>
+              <div class="stat"><div class="k">Est. gas @450</div><div class="v">${(reported * 450).toLocaleString()}</div></div>
+            </div>
+            <div class="meta">netlist ${(netlist.length - 2) / 2} bytes · signals ${d.signals} · inputs ${nIn} · holder ${esc(holder)}</div>`;
+          cards.appendChild(el);
+        }
+      }
+      if (!total) throw new Error("No circuits found on those processors.");
+      line.hidden = false;
+      line.className = "statusline" + (mismatches ? " bad" : "");
+      line.innerHTML = `<span class="tag ${mismatches ? "bad" : "ok"}">${mismatches ? "MISMATCH" : "DECODE VERIFIED"}</span>
+        <span>chain 196 · block ${block.toLocaleString()} · ${cpuCount} processors · ${total} circuits read · ${matched} matched, ${refs} REF, ${mismatches} mismatches</span>`;
+    } catch (e) {
+      err.textContent = "Error: " + (e && e.message ? e.message : String(e));
+    } finally {
+      btn.disabled = false; btn.textContent = "Load circuits";
+    }
+  }
+
+  document.getElementById("loadBtn").addEventListener("click", loadCircuits);
+  window.addEventListener("DOMContentLoaded", loadCircuits);
+})();
+</script>
+</body>
+</html>
