@@ -7,7 +7,9 @@ try {
 }
 require("dotenv").config();
 
-const PRIVATE_KEY = process.env.PRIVATE_KEY || "0x" + "11".repeat(32);
+// No fallback key: fail loudly when PRIVATE_KEY is absent instead of
+// silently signing with a bogus key (see hardhat-contract-dev skill).
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {

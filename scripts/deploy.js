@@ -35,6 +35,9 @@ async function main() {
     process.exit(1);
   }
   const netConfig = hardhatConfig.networks[networkName];
+  if (!process.env.PRIVATE_KEY) {
+    throw new Error("PRIVATE_KEY is not set. Copy .env.example to .env and add a funded deployer key.");
+  }
   const provider = new ethers.JsonRpcProvider(netConfig.url, netConfig.chainId);
   const wallet = new ethers.Wallet(netConfig.accounts[0], provider);
   const chainId = Number((await provider.send("eth_chainId", [])).toString());
