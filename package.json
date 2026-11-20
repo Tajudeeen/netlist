@@ -9,7 +9,9 @@
     "deploy:xlayer-testnet": "node scripts/deploy.js xlayerTestnet",
     "deploy:xlayer-mainnet": "node scripts/deploy.js xlayerMainnet",
     "demo": "node scripts/demo.js",
-    "verify": "node scripts/verify.js"
+    "verify": "node scripts/verify.js",
+    "verify:xlayer": "node scripts/verify-xlayer.js",
+    "fixtures:xlayer": "node scripts/fetch-xlayer-fixtures.js"
   },
   "keywords": [],
   "author": "",

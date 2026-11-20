@@ -8,6 +8,24 @@ into gas cost, dependency depth, or whether the processor it lives on is even
 sealed. Netlist fixes that with three layers of fact, kept deliberately
 separate instead of collapsed into one "is this safe" boolean.
 
+## What Is Actually Real (read this first)
+
+Evidence, not claims. Every item below was re-run on 2026-11-20:
+
+| Claim | Status | How to reproduce |
+|---|---|---|
+| 14 Solidity contracts compile; 29 tests pass on a local EVM | REAL | `npm test` |
+| Real TAP-02 netlist decoder agrees with an independent JS decoder on 9 circuits fetched from **live X Layer mainnet** | REAL | `npm test` (fixture: `test/fixtures/xlayer-circuits.json`) |
+| Decoder agrees with each processor's own `circuitInfo().gateCount` on all 6 non-REF live circuits | REAL | `npm run verify:xlayer` |
+| 436 real TapeOut processors exist on X Layer; factory/beacon/opener/payments code verified at the TAP-02/TAP-10 addresses | REAL | `npm run verify:xlayer` (chainId 196, eth_getCode + eth_call) |
+| `TapeOutV2Adapter` implements the real TAP-02/TAP-10 ABI and plugs into the unchanged core contracts | REAL | `npm test` (last test: full attestation → gate check) |
+| Netlist's own contracts deployed on X Layer | **NOT YET** — no private key in this repo | see "Deploying to X Layer" |
+| Protocol-enforced composition checks (all calls forced through the gate) | **NOT VERIFIED** — advisory only | see "Honest limitations" |
+| Recursive REF dependency verification | **NOT IMPLEMENTED** | see "Honest limitations" |
+
+Re-fetch the fixture any time with `node scripts/fetch-xlayer-fixtures.js`
+(requires network). The fixture is committed so tests never depend on network.
+
 ## Architecture
 
 **Layer 1, Derived (trustless).** Gate count, circuit depth, and an estimated
@@ -48,31 +66,35 @@ which resolves to an `IProcessorAdapter`. An unconfigured processor reverts
 with `NoAdapterConfigured`, loudly, rather than returning silent zeros that
 would look like an empty, harmless circuit.
 
-This exists because of something found while building this: a real Circuit
-Netlist Format spec (`Circuits.sol` / `NetlistVM.sol`, described as source-
-verified on BscScan) was merged into `TapeOutProtocol/TAPs` as TAP-20 on
-2026-10-01, with real selectors (`isCPU(address)` = `0x5f5a364f`), a cited
-gas model (2,317 gas/gate), and a documented REF record format
-(31 + 3×nIns bytes), checked at the time against live BNB Smart Chain state.
-It was renumbered TAP-02 on 2026-10-04. Re-fetching the live repository
-directly while writing this build shows neither TAP-02 nor TAP-20 present,
-only TAP-01 (merged) and TAP-10 (still an unmerged pull request) remain. The
-spec was real, then became unavailable in the authoritative source, for
-reasons this build has no way to know.
+This is what makes Netlist possible on X Layer: real Circuit Netlist Format
+specs **are live** in `TapeOutProtocol/TAPs` (TAP-02, "Circuit Netlist Format
+and Evaluation Semantics", and TAP-10, "DeWEB Access and Messaging Layers").
+They document literal on-chain netlists — NAND/LATCH/REF records — not opaque
+bytecode, so gate count, depth and netlist hash can be *derived* rather than
+self-reported. Selectors and addresses were verified by live `eth_call` on X
+Layer (196) on 2026-11-20:
 
-That instability is the actual finding, not just "the ABI is undocumented."
-It means hardcoding any version of that ABI into the core logic would mean
-redeploying and re-auditing the whole system every time the spec's status
-changes again. The adapter indirection means it doesn't: deploy a new
-`IProcessorAdapter` implementation when (or if) a real ABI stabilizes, call
-`ProcessorAdapterRegistry.setAdapter(processor, newAdapter)`, and every
-existing attestation, policy, and integration keeps working unchanged.
+- processor: `circuitInfo(id)` = `0x084d60f1`, `netlist(id)` = `0x3fc4be56`
+- factory: `isCPU(address)` = `0x5f5a364f`, `isSealed()` = `0x631f9852`,
+  `cpuCount()` = `0xa94da8a7`, currently **436 processors**
+- container opener `0x536adD8F…0106`, payments `0x68809Fd2…6f9`
+  (TAP-10 Deployments)
 
-`DirectProcessorAdapter` is the one adapter shipped with this build. It
-implements `ITapeOutProcessor`, the provisional interface this project
-started with, informed by the since-removed spec but not a transcription of
-it. See `contracts/interfaces/ITapeOutProcessor.sol` for the full history and
-caveats on every assumed function.
+The adapter indirection still matters: TAP-02 was briefly absent from the
+repository earlier in this build, and the L2 processor ABI may differ from the
+BNB one. A new `IProcessorAdapter` implementation can be deployed and swapped
+with `setAdapter(processor, newAdapter)` without touching any core contract,
+attestation, or policy.
+
+Two adapters ship:
+- `DirectProcessorAdapter` — the original provisional guess interface
+  (`ITapeOutProcessor.sol`), kept for the local demo and mock processor.
+- `TapeOutV2Adapter` — **the real one**, reading actual TAP-02/TAP-10
+  contracts. It decodes netlist bytes on chain (bounded parser in
+  `TapNetlist.sol`), derives the staleness hash as `keccak256(netlist(id))`,
+  derives containers via `opener.accountOf`, and checks activation via
+  `payments.isContainerLive` (TAP-10 §6.3: a reverting call is false).
+  Use this one against real processors.
 
 ## Verifiability: how to check these claims yourself
 
@@ -86,12 +108,18 @@ Don't take this README's word for any of the following, check it directly:
   processor and token ID, pulls `statusReport()` twice from two independent
   calls so you can see it's a live read, with the exact block explorer steps
   to reproduce it yourself without trusting this script at all.
-- **The TAP-02/TAP-20 history above.** Re-fetch
-  `https://github.com/TapeOutProtocol/TAPs` yourself, the index table is the
-  ground truth, not this README, and it can change again.
-- **The test suite.** `npm test` runs 19 tests against the real compiled
-  contracts on a local EVM, covering ownership enforcement, the publisher/
-  auditor split, staleness detection, and policy checks.
+- **Live adapter correctness.** `npm run verify:xlayer` reads real circuits
+  from X Layer mainnet, checks `eth_getCode` at the TAP-02/TAP-10 addresses,
+  and cross-checks decoded gate count against each processor's own
+  `circuitInfo()` — with the honest gaps printed at the end. Requires network.
+- **The TAP-02/TAP-10 specs.** Re-fetch `https://github.com/TapeOutProtocol/TAPs`
+  yourself; the index table and `TAPs/TAP-02.md` / `TAPs/TAP-10.md` are ground
+  truth, not this README, and can change again.
+- **The test suite.** `npm test` runs 29 tests against the real compiled
+  contracts on a local EVM, covering the original 19 (ownership, publisher/
+  auditor split, staleness, policy) plus 10 real-adapter tests, including a
+  differential check of the Solidity decoder vs an independent JS decoder on
+  9 circuits fetched from live X Layer.
 - **The demo.** `npm run demo` runs the five-step A→B→C scenario end to end
   and prints a full transcript, including the honest boundary of what gets
   caught versus what doesn't (see Step 5's output).
@@ -103,24 +131,30 @@ Don't take this README's word for any of the following, check it directly:
   not documented anywhere currently live in TapeKit or the TAPs repo. Treat
   Netlist as an advisory pre-flight check a well-behaved container calls
   voluntarily, not a protocol-enforced guarantee, until that's confirmed.
-- **The adapter's assumed ABI is a provisional guess**, informed by a spec
-  that existed and then disappeared, not a confirmed interface. Re-verify
-  against the live TAPs repository and live chain state before trusting
-  `DirectProcessorAdapter` against any real processor, see "Verifiability" above.
+- **The real adapter's assumptions are now verified but narrow.** TAP-02 and
+  TAP-10 are live and their addresses/selectors were checked on X Layer; the
+  adapter fails closed for non-TapeOut processors, malformed netlists, and
+  reverting payments calls. But TAP-02 itself states its verified-source
+  comparison applies **to BNB Smart Chain only**; the L2 processor ABI was
+  confirmed here by direct selector calls and netlist decoding, not by source
+  verification. Re-run `npm run verify:xlayer` before relying on it.
+- **Seal status fails closed on live X Layer.** TAP-10 §13.8 defines a seal as
+  factory sealed + beacon implementation pinned + `beacon.owner() == factory`.
+  Live X Layer reports `beacon.owner() == 0x0`, so `isSealed()` returns false
+  even for real circuits. `sealEvidence()` exposes the three claims
+  separately rather than hiding the discrepancy behind one boolean.
 - **`estimatedGas` is a flat, documented approximation** (gate count × a
   configurable constant), not a proven upper bound. The 2,317 gas/gate figure
-  that was briefly documented in the since-removed TAP-02 is cited above for
-  context, not wired into the code as a trusted constant. Don't present
-  `estimatedGas` as a safety guarantee on its own, it's a comparison
-  benchmark.
-- **No recursive dependency verification.** `declaredDepsCount` and
-  `depsListHash` are a self-declared count and a hash of an off-chain list.
-  Netlist does not currently parse a circuit's actual wiring to discover or
-  verify its dependencies automatically, even though the removed TAP-02 spec
-  described a REF record type that would make this possible in principle.
-  Don't build toward REF-record parsing until a stable, currently-live spec
-  actually documents it, see `scripts/demo.js` Step 5 for exactly where this
-  boundary sits today.
+  measured for one 1,204-gate circuit in TAP-02 is cited for context, not
+  wired in as a trusted constant. Don't present it as a safety guarantee on
+  its own, it's a comparison benchmark.
+- **No recursive dependency verification.** `TapNetlist.sol` decodes REF
+  records and `depthIsBounded()` reports whether a circuit composes others,
+  but it does NOT walk REF targets transitively. `declaredDepsCount` and
+  `depsListHash` remain self-declared. A circuit that uses REF can hide its
+  true depth behind a 31-byte pointer; a caller needing a hard bound must
+  reject `depthIsBounded() == false` or walk the closure separately. See
+  `scripts/demo.js` Step 5.
 
 ## Project layout
 
@@ -131,19 +165,29 @@ contracts/
   ProcessorAdapterRegistry.sol       owner-managed processor -> adapter mapping
   interfaces/
     IProcessorAdapter.sol            the only ABI-assumption boundary
-    ITapeOutProcessor.sol            the provisional assumed processor interface
+    ITapeOutProcessor.sol            the original provisional interface (mock path)
+    ITapeOutV2.sol                   REAL TAP-02/TAP-10 interfaces (verified)
   adapters/
-    DirectProcessorAdapter.sol       default adapter implementing ITapeOutProcessor
+    DirectProcessorAdapter.sol       demo adapter implementing ITapeOutProcessor
+    TapeOutV2Adapter.sol             REAL adapter for live TapeOut contracts
+  libraries/
+    TapNetlist.sol                   bounded on-chain TAP-02 decoder + depth math
   mocks/
     MockProcessor.sol                stand-in processor for tests/demo
+    V2Mocks.sol                      TAP-02/TAP-10 mock processor + companions
 scripts/
   build.js      compiles everything via the solc npm package (see note below)
   deploy.js     deploys all four contracts to a configured network
   demo.js       runs the 5-step scenario end to end on a local EVM
   verify.js     provability checklist against a live deployment
+  verify-xlayer.js  LIVE adapter cross-check against real X Layer circuits
+  fetch-xlayer-fixtures.js  refreshes the committed real-circuit test fixture
 test/
   CompositionRegistry.test.js
   CompositionGate.test.js
+  TapeOutV2Adapter.test.js  10 tests incl. differential decode on real circuits
+  decoder.js                independent JS TAP-02 decoder (test oracle)
+  fixtures/xlayer-circuits.json  9 circuits fetched via eth_call on X Layer
 dashboard/
   index.html    standalone status page, reads statusReport() from any RPC
 hardhat.config.js   network config (kept for reference/compatibility)
@@ -172,9 +216,31 @@ contract's ABI instead.
 ```bash
 npm install
 npm run build     # compiles contracts -> build/contracts.json
-npm test           # runs the full test suite (19 tests) against a local EVM
+npm test           # runs the full suite (29 tests) against a local EVM
 npm run demo        # runs the 5-step composability scenario
+npm run verify:xlayer  # LIVE cross-check against real X Layer circuits (needs network)
 ```
+
+## Using the real adapter on X Layer
+
+```js
+// deployed TapeOut V2 addresses on X Layer (196), from TAP-02/TAP-10:
+const adapter = await ethers.deployContract("TapeOutV2Adapter", [
+  "0x1f09DAeFA827f02CBb40967cc91b259763760761", // factory
+  "0xf70d1ed4f62CF3780157B0b421b7E2F45bD0991C", // beacon
+  "0x536adD8F30f03b69f6fbF29d425A816A0dC50106", // opener
+  "0x68809Fd2fb343aA57D0aeB7f33Defe477c9666f9", // payments
+  "0x977f217887E085D298Cb3819cDAD5A0ee35F29B2", // pinned circuit impl
+]);
+// then: adapterRegistry.setAdapter(realProcessor, await adapter.getAddress())
+```
+
+After that the unchanged `CompositionRegistry` / `CompositionGate` work
+against real circuits, including `keccak256(netlist)` staleness and real
+container activation. `analyzeCircuit()` additionally cross-checks the
+decoded gate count against `circuitInfo()`; `sealEvidence()` shows the three
+seal claims separately; `depthIsBounded()` is false for REF circuits.
+
 
 ## Deploying to X Layer
 
@@ -186,12 +252,12 @@ npm run deploy:xlayer-mainnet
 ```
 
 This deploys `ProcessorAdapterRegistry`, `DirectProcessorAdapter`,
-`CompositionRegistry`, and `CompositionGate`, in that order. Nothing is wired
-to a real processor automatically: call
-`adapterRegistry.setAdapter(<realProcessorAddress>, <adapterAddress>)`
-yourself once you've confirmed (see "Verifiability") what adapter actually
-matches that processor's real, current ABI. Until then every read for an
-unconfigured processor reverts by design.
+`CompositionRegistry`, and `CompositionGate`, in that order. To use real
+circuits, deploy `TapeOutV2Adapter` with the X Layer TAP-02/TAP-10 addresses
+above and call
+`adapterRegistry.setAdapter(<realProcessorAddress>, <v2AdapterAddress>)`.
+Nothing is wired to a real processor automatically; until then every read for
+an unconfigured processor reverts by design.
 
 X Layer is documented as an enhanced OP Stack L2 (migrated from an earlier
 Polygon CDK setup). Re-confirm current RPC URLs and chain IDs against
@@ -215,14 +281,15 @@ X Layer integrate, not a standalone consumer product.
 
 ## Submission checklist (X Layer TapeOut Accelerate)
 
-- [ ] Re-verify the live TAPs repository's current index before building
-      the adapter further, its content has already changed once mid-build
-- [ ] Deploy all four contracts to X Layer (testnet first, then mainnet)
-- [ ] Find or create real circuits on X Layer to attest against for the
-      demo (X Layer's processor population is far smaller than BNB's, you
-      may need to create your own sample circuits)
-- [ ] Confirm a real adapter against the real processor ABI, then call
-      `setAdapter`, then run `scripts/verify.js` against it as evidence
+- [x] Re-verify the live TAPs repository index (TAP-02 and TAP-10 are live as
+      of 2026-11-20) and build the real adapter against it
+- [x] Confirm a real adapter against the real processor ABI (`eth_call` on 436
+      processors; `npm run verify:xlayer` cross-checks decoded gate counts
+      against `circuitInfo()` on 9 live circuits)
+- [ ] Deploy all four contracts to X Layer (testnet first, then mainnet) —
+      BLOCKED: no `PRIVATE_KEY` in this environment
+- [ ] Deploy `TapeOutV2Adapter`, call `setAdapter` for a real processor, and
+      run `scripts/verify.js` against the deployed Gate as on-chain evidence
 - [ ] Plug the deployed addresses into `dashboard/index.html` and host it, a
       `tape://` DeWEB site via TapeKit is the on-brand option
 - [ ] Record the demo video (≤3 min): the blind-composition problem, the
@@ -230,3 +297,5 @@ X Layer integrate, not a standalone consumer product.
       attestation-fee revenue model
 - [ ] Submit processor contract address + circuit ID (or access link) via the
       official Google Form before Dec 7, 2026
+- [ ] Stretch: recursive REF dependency verification (walk REF targets from
+      `netlist()` bytes and check transitively), now that TAP-02 is live

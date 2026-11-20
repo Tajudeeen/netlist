@@ -1,0 +1,303 @@
+{
+  "source": "live eth_call on X Layer (chain 196)",
+  "rpc": "https://rpc.xlayer.tech",
+  "block": 76412310,
+  "factory": {
+    "target": "0x1f09DAeFA827f02CBb40967cc91b259763760761",
+    "interface": {
+      "fragments": [
+        {
+          "type": "function",
+          "inputs": [],
+          "name": "cpuCount",
+          "constant": true,
+          "outputs": [
+            {
+              "name": "",
+              "type": "uint256",
+              "baseType": "uint256",
+              "indexed": null,
+              "components": null,
+              "arrayLength": null,
+              "arrayChildren": null
+            }
+          ],
+          "stateMutability": "view",
+          "payable": false,
+          "gas": null
+        },
+        {
+          "type": "function",
+          "inputs": [],
+          "name": "nextId",
+          "constant": true,
+          "outputs": [
+            {
+              "name": "",
+              "type": "uint256",
+              "baseType": "uint256",
+              "indexed": null,
+              "components": null,
+              "arrayLength": null,
+              "arrayChildren": null
+            }
+          ],
+          "stateMutability": "view",
+          "payable": false,
+          "gas": null
+        },
+        {
+          "type": "function",
+          "inputs": [
+            {
+              "name": "",
+              "type": "uint256",
+              "baseType": "uint256",
+              "indexed": null,
+              "components": null,
+              "arrayLength": null,
+              "arrayChildren": null
+            }
+          ],
+          "name": "cpuAt",
+          "constant": true,
+          "outputs": [
+            {
+              "name": "",
+              "type": "address",
+              "baseType": "address",
+              "indexed": null,
+              "components": null,
+              "arrayLength": null,
+              "arrayChildren": null
+            }
+          ],
+          "stateMutability": "view",
+          "payable": false,
+          "gas": null
+        },
+        {
+          "type": "function",
+          "inputs": [
+            {
+              "name": "",
+              "type": "uint256",
+              "baseType": "uint256",
+              "indexed": null,
+              "components": null,
+              "arrayLength": null,
+              "arrayChildren": null
+            }
+          ],
+          "name": "circuitInfo",
+          "constant": true,
+          "outputs": [
+            {
+              "name": "nIn",
+              "type": "uint32",
+              "baseType": "uint32",
+              "indexed": null,
+              "components": null,
+              "arrayLength": null,
+              "arrayChildren": null
+            },
+            {
+              "name": "nOut",
+              "type": "uint32",
+              "baseType": "uint32",
+              "indexed": null,
+              "components": null,
+              "arrayLength": null,
+              "arrayChildren": null
+            },
+            {
+              "name": "nState",
+              "type": "uint32",
+              "baseType": "uint32",
+              "indexed": null,
+              "components": null,
+              "arrayLength": null,
+              "arrayChildren": null
+            },
+            {
+              "name": "gateCount",
+              "type": "uint32",
+              "baseType": "uint32",
+              "indexed": null,
+              "components": null,
+              "arrayLength": null,
+              "arrayChildren": null
+            }
+          ],
+          "stateMutability": "view",
+          "payable": false,
+          "gas": null
+        },
+        {
+          "type": "function",
+          "inputs": [
+            {
+              "name": "",
+              "type": "uint256",
+              "baseType": "uint256",
+              "indexed": null,
+              "components": null,
+              "arrayLength": null,
+              "arrayChildren": null
+            }
+          ],
+          "name": "netlist",
+          "constant": true,
+          "outputs": [
+            {
+              "name": "",
+              "type": "bytes",
+              "baseType": "bytes",
+              "indexed": null,
+              "components": null,
+              "arrayLength": null,
+              "arrayChildren": null
+            }
+          ],
+          "stateMutability": "view",
+          "payable": false,
+          "gas": null
+        },
+        {
+          "type": "function",
+          "inputs": [
+            {
+              "name": "",
+              "type": "uint256",
+              "baseType": "uint256",
+              "indexed": null,
+              "components": null,
+              "arrayLength": null,
+              "arrayChildren": null
+            }
+          ],
+          "name": "ownerOf",
+          "constant": true,
+          "outputs": [
+            {
+              "name": "",
+              "type": "address",
+              "baseType": "address",
+              "indexed": null,
+              "components": null,
+              "arrayLength": null,
+              "arrayChildren": null
+            }
+          ],
+          "stateMutability": "view",
+          "payable": false,
+          "gas": null
+        }
+      ],
+      "deploy": {
+        "type": "constructor",
+        "inputs": [],
+        "payable": false,
+        "gas": null
+      },
+      "fallback": null,
+      "receive": false
+    },
+    "runner": {},
+    "filters": {},
+    "fallback": null
+  },
+  "fetchedAt": "2026-11-20T13:29:35.911Z",
+  "circuits": [
+    {
+      "processor": "0x839bdD6fa7A66416A609A735e11DE5411B98574e",
+      "tokenId": 1,
+      "nIn": 2,
+      "nOut": 1,
+      "nState": 0,
+      "gateCount": 4,
+      "netlist": "0x00000002000003000000020000040000000300000400000005000006",
+      "owner": "0x571d447f4f24688eC35Ccf07f1D6993655F6aF15"
+    },
+    {
+      "processor": "0x839bdD6fa7A66416A609A735e11DE5411B98574e",
+      "tokenId": 2,
+      "nIn": 2,
+      "nOut": 1,
+      "nState": 0,
+      "gateCount": 3,
+      "netlist": "0x000000020000030000000400000400000005000005",
+      "owner": "0x571d447f4f24688eC35Ccf07f1D6993655F6aF15"
+    },
+    {
+      "processor": "0x839bdD6fa7A66416A609A735e11DE5411B98574e",
+      "tokenId": 3,
+      "nIn": 2,
+      "nOut": 1,
+      "nState": 0,
+      "gateCount": 3,
+      "netlist": "0x000000020000030000000400000400000005000005",
+      "owner": "0x571d447f4f24688eC35Ccf07f1D6993655F6aF15"
+    },
+    {
+      "processor": "0x0565EA48CA41Ae559d8d491dbb0a9ec945DB551b",
+      "tokenId": 1,
+      "nIn": 0,
+      "nOut": 1,
+      "nState": 2,
+      "gateCount": 10,
+      "netlist": "0x02f044d395c91e77459e6b2155015e14f0dd9b349f00000000000000660001",
+      "owner": "0xa2E4592EbbD0A08CF49DC306358b064587ab3362"
+    },
+    {
+      "processor": "0x0565EA48CA41Ae559d8d491dbb0a9ec945DB551b",
+      "tokenId": 2,
+      "nIn": 0,
+      "nOut": 1,
+      "nState": 2,
+      "gateCount": 10,
+      "netlist": "0x02f044d395c91e77459e6b2155015e14f0dd9b349f00000000000000660001",
+      "owner": "0xa2E4592EbbD0A08CF49DC306358b064587ab3362"
+    },
+    {
+      "processor": "0x0565EA48CA41Ae559d8d491dbb0a9ec945DB551b",
+      "tokenId": 3,
+      "nIn": 0,
+      "nOut": 1,
+      "nState": 2,
+      "gateCount": 10,
+      "netlist": "0x02f044d395c91e77459e6b2155015e14f0dd9b349f00000000000000660001",
+      "owner": "0xa2E4592EbbD0A08CF49DC306358b064587ab3362"
+    },
+    {
+      "processor": "0xE0EF4FffD869cBD24b2F83E6d2d83109937E05ff",
+      "tokenId": 1,
+      "nIn": 2,
+      "nOut": 1,
+      "nState": 0,
+      "gateCount": 3,
+      "netlist": "0x000000020000030000000400000400000005000005",
+      "owner": "0x1CC445Da5D717FE8648B0d161Dd8BA395a75077A"
+    },
+    {
+      "processor": "0xE0EF4FffD869cBD24b2F83E6d2d83109937E05ff",
+      "tokenId": 2,
+      "nIn": 2,
+      "nOut": 1,
+      "nState": 0,
+      "gateCount": 3,
+      "netlist": "0x000000020000030000000400000400000005000005",
+      "owner": "0xA75266aC7914fF3d4eB4F6cb94Ea5215dB90255f"
+    },
+    {
+      "processor": "0xE0EF4FffD869cBD24b2F83E6d2d83109937E05ff",
+      "tokenId": 3,
+      "nIn": 2,
+      "nOut": 1,
+      "nState": 0,
+      "gateCount": 3,
+      "netlist": "0x000000020000030000000400000400000005000005",
+      "owner": "0xA75266aC7914fF3d4eB4F6cb94Ea5215dB90255f"
+    }
+  ]
+}
