@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Netlist — Circuit Status</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e;
+    --ok: #3fb950; --bad: #f85149; --warn: #d29922;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0; padding: 24px 16px 48px;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 4px; }
+  input {
+    width: 100%; padding: 10px 12px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 6px; color: var(--text);
+    font-size: 14px; font-family: ui-monospace, monospace;
+  }
+  button {
+    margin-top: 16px; padding: 10px 18px; background: #238636;
+    color: #fff; border: none; border-radius: 6px; font-size: 14px;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .panel {
+    margin-top: 24px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; display: none;
+  }
+  .layer-title {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--muted); margin: 16px 0 8px;
+  }
+  .layer-title:first-child { margin-top: 0; }
+  .row {
+    display: flex; justify-content: space-between; padding: 6px 0;
+    border-bottom: 1px solid var(--border); font-size: 13px;
+  }
+  .row:last-child { border-bottom: none; }
+  .val { font-family: ui-monospace, monospace; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+  .err { color: var(--bad); margin-top: 16px; font-size: 13px; white-space: pre-wrap; }
+  .note {
+    margin-top: 24px; font-size: 12px; color: var(--muted);
+    border-top: 1px solid var(--border); padding-top: 16px; line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Netlist — Circuit Status</h1>
+  <div class="sub">
+    Live Layer 1 (derived), Layer 2 (declared), and Layer 3 (network) facts for a
+    TapeOut circuit, read directly from a deployed CompositionGate contract.
+  </div>
+
+  <label>RPC URL (X Layer testnet/mainnet)</label>
+  <input id="rpcUrl" placeholder="https://rpc.xlayer.tech" />
+
+  <label>CompositionGate contract address</label>
+  <input id="gateAddr" placeholder="0x..." />
+
+  <label>Processor contract address</label>
+  <input id="processorAddr" placeholder="0x..." />
+
+  <label>Circuit (token) ID</label>
+  <input id="tokenId" placeholder="1" />
+
+  <button id="loadBtn">Check status</button>
+
+  <div class="err" id="err"></div>
+
+  <div class="panel" id="panel">
+    <div class="layer-title">Layer 1 — Derived (trustless, read from the netlist)</div>
+    <div class="row"><span>Gate count</span><span class="val" id="gateCount">—</span></div>
+    <div class="row"><span>Circuit depth</span><span class="val" id="depth">—</span></div>
+    <div class="row"><span>Estimated gas (flat gate-count estimate, not a proven bound)</span><span class="val" id="estGas">—</span></div>
+
+    <div class="layer-title">Layer 2 — Declared (attested, staleness-checked)</div>
+    <div class="row"><span>Publisher attestation</span><span class="val" id="pubExists">—</span></div>
+    <div class="row"><span>Publisher attestation stale?</span><span class="val" id="pubStale">—</span></div>
+    <div class="row"><span>Publisher risk tier</span><span class="val" id="pubRisk">—</span></div>
+    <div class="row"><span>Declared dependency count</span><span class="val" id="depsCount">—</span></div>
+    <div class="row"><span>Auditor attestation</span><span class="val" id="audExists">—</span></div>
+    <div class="row"><span>Auditor attestation stale?</span><span class="val" id="audStale">—</span></div>
+    <div class="row"><span>Auditor risk tier</span><span class="val" id="audRisk">—</span></div>
+
+    <div class="layer-title">Layer 3 — Network (live, not cached)</div>
+    <div class="row"><span>Processor sealed?</span><span class="val" id="sealed">—</span></div>
+    <div class="row"><span>Container</span><span class="val" id="container">—</span></div>
+    <div class="row"><span>Container live?</span><span class="val" id="containerLive">—</span></div>
+  </div>
+
+  <div class="note">
+    This page reads directly from the chain via the RPC URL you provide, using a
+    single plain JSON-RPC <code>eth_call</code>, no server, no indexer, nothing
+    cached. If X Layer's current independent node-operator count is small, treat
+    one RPC endpoint's answer as a single source rather than a quorum-verified
+    read, the kind of multi-node consensus TapeKit's own kernel performs for
+    DeWEB content is a separate, stronger guarantee this simple dashboard does
+    not attempt to replicate.
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+<script>
+  const RISK_LABELS = ["None", "Low", "Moderate", "High"];
+
+  // Minimal ABI slice, just the statusReport function, avoids needing the
+  // full build/contracts.json ABI dump in a page meant to be shared standalone.
+  const GATE_ABI = [
+    "function statusReport(address processor, uint256 tokenId) view returns (tuple(uint32 gateCount, uint32 depth, uint256 estimatedGas, bool hasPublisherAttestation, bool publisherAttestationStale, uint8 publisherRiskTier, uint32 declaredDepsCount, bool hasAuditorAttestation, bool auditorAttestationStale, uint8 auditorRiskTier, bool processorSealed, address container, bool containerLive))"
+  ];
+
+  function setText(id, text, cls) {
+    const el = document.getElementById(id);
+    el.textContent = text;
+    el.className = "val" + (cls ? " " + cls : "");
+  }
+
+  document.getElementById("loadBtn").addEventListener("click", async () => {
+    const errEl = document.getElementById("err");
+    const panel = document.getElementById("panel");
+    errEl.textContent = "";
+    panel.style.display = "none";
+
+    const rpcUrl = document.getElementById("rpcUrl").value.trim();
+    const gateAddr = document.getElementById("gateAddr").value.trim();
+    const processorAddr = document.getElementById("processorAddr").value.trim();
+    const tokenId = document.getElementById("tokenId").value.trim();
+
+    if (!rpcUrl || !gateAddr || !processorAddr || !tokenId) {
+      errEl.textContent = "Fill in all four fields.";
+      return;
+    }
+
+    try {
+      const provider = new ethers.JsonRpcProvider(rpcUrl);
+      const gate = new ethers.Contract(gateAddr, GATE_ABI, provider);
+      const r = await gate.statusReport(processorAddr, tokenId);
+
+      setText("gateCount", r.gateCount.toString());
+      setText("depth", r.depth.toString());
+      setText("estGas", r.estimatedGas.toString());
+
+      setText("pubExists", r.hasPublisherAttestation ? "yes" : "no", r.hasPublisherAttestation ? "ok" : "bad");
+      setText("pubStale", r.hasPublisherAttestation ? (r.publisherAttestationStale ? "yes" : "no") : "n/a", r.publisherAttestationStale ? "bad" : "ok");
+      setText("pubRisk", RISK_LABELS[r.publisherRiskTier] || r.publisherRiskTier);
+      setText("depsCount", r.declaredDepsCount.toString());
+
+      setText("audExists", r.hasAuditorAttestation ? "yes" : "no", r.hasAuditorAttestation ? "ok" : "warn");
+      setText("audStale", r.hasAuditorAttestation ? (r.auditorAttestationStale ? "yes" : "no") : "n/a", r.auditorAttestationStale ? "bad" : "ok");
+      setText("audRisk", RISK_LABELS[r.auditorRiskTier] || r.auditorRiskTier);
+
+      setText("sealed", r.processorSealed ? "yes" : "no", r.processorSealed ? "ok" : "warn");
+      setText("container", r.container);
+      setText("containerLive", r.containerLive ? "yes" : "no", r.containerLive ? "ok" : "bad");
+
+      panel.style.display = "block";
+    } catch (e) {
+      errEl.textContent = "Error: " + (e && e.message ? e.message : String(e));
+    }
+  });
+</script>
+</body>
+</html>
