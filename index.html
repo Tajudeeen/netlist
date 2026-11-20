@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#f5f3ec" />
+<meta name="description" content="Netlist — a composability pre-flight check for TapeOut circuits on X Layer. Reads the netlist itself, not a claim about it." />
+<title>Netlist — see what a circuit actually is</title>
+<link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+<div id="site-header"></div>
+<main>
+  <div class="splash">
+    <div>
+      <div class="kicker">TapeOut × X Layer · live instrument</div>
+      <h1>See what a circuit <em>actually is.</em></h1>
+      <p class="lede">
+        TapeOut circuits are literal on-chain netlists — NAND, LATCH and REF records,
+        not opaque bytecode. Netlist reads those bytes from chain 196 and derives the
+        facts you would otherwise trust blind: gate count, depth, and a gas estimate.
+      </p>
+      <div class="actions">
+        <a class="btn" href="explorer.html">Open the live explorer →</a>
+        <a class="btn ghost" href="how-it-works.html">How it works</a>
+      </div>
+    </div>
+    <aside class="splash-aside">
+      <span class="num">436</span>
+      <div class="kicker">processors live on X Layer</div>
+      <p>Read from the TapeOut factory at <code>0x1f09DAeF…</code> — not a hardcoded fixture.</p>
+      <div class="rule"></div>
+      <div class="kicker">what you can check right now</div>
+      <p>Gate count · circuit depth · netlist size · REF composition · processor registration · seal evidence · container activation.</p>
+      <div class="rule"></div>
+      <p class="muted">No deploy key, no wallet connection, no signup. One plain <code>eth_call</code> per question.</p>
+    </aside>
+  </div>
+  <div class="ticker" id="ticker">
+    <span>Chain <b>196</b></span>
+    <span>Factory <b id="tCpuCount">reading…</b> processors</span>
+    <span>Adapter <b>TAP-02 / TAP-10</b></span>
+    <span>Tests <b>33 passing</b></span>
+    <span>Decoder <b>0 mismatches</b></span>
+  </div>
+</main>
+<div id="site-footer"></div>
+<script src="shared.js"></script>
+<script>
+  Netlist.mount("home");
+  (async () => {
+    const url = "https://rpc.xlayer.tech";
+    try {
+      const chain = Number(await Netlist.rpc(url, "eth_chainId", []));
+      const count = await Netlist.ethCall(url, Netlist.C.factory, Netlist.S.cpuCount);
+      if (chain === 196) {
+        document.getElementById("tCpuCount").textContent = Number(Netlist.asUint(count, 0));
+      } else {
+        document.getElementById("tCpuCount").textContent = "wrong chain";
+      }
+    } catch (e) {
+      document.getElementById("tCpuCount").textContent = "unavailable";
+    }
+  })();
+</script>
+</body>
+</html>
