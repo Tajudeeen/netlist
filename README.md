@@ -1,33 +1,29 @@
 # Netlist
 
-**Live demo: https://tajudeeen.github.io/netlist/** — reads real circuits from X Layer in-browser, no deploy key needed.
+**Live demo: https://tajudeeen.github.io/netlist/** — reads real circuits from X Layer in-browser. No deploy key needed.
 
-A composability gate for TapeOut circuits on X Layer. Built for X Layer
-TapeOut Accelerate.
+**Netlist — know what you're composing.** A circuit-composition pre-flight check for TapeOut on X Layer. It walks a circuit's REF dependencies **on chain**, checks each circuit's attestation against its **live netlist hash**, and returns an allow/deny with a reason code — so a rewired circuit deep in a dependency chain blocks the parent composition.
 
-Composing someone else's circuit today means trusting it blind: no visibility
-into gas cost, dependency depth, or whether the processor it lives on is even
-sealed. Netlist fixes that with three layers of fact, kept deliberately
-separate instead of collapsed into one "is this safe" boolean.
+Built for X Layer TapeOut Accelerate. See [`SUBMISSION.md`](SUBMISSION.md) for the judge-facing answers and [`research/hackathon-intelligence.md`](research/hackathon-intelligence.md) for the source-backed official brief.
+
+Composing someone else's circuit today means trusting it blind: no visibility into what it depends on, whether its claims still match its bytes, or whether the processor it lives on is upgradeable. Netlist keeps those three kinds of fact separate instead of collapsing them into one "is this safe" boolean.
 
 ## What Is Actually Real (read this first)
 
-Evidence, not claims. Every item below was re-run on 2026-11-20:
+Evidence, not claims. Every row was re-run on 2026-11-20:
 
 | Claim | Status | How to reproduce |
 |---|---|---|
-| 14 Solidity contracts compile; 29 tests pass on a local EVM | REAL | `npm test` |
-| Real TAP-02 netlist decoder agrees with an independent JS decoder on 9 circuits fetched from **live X Layer mainnet** | REAL | `npm test` (fixture: `test/fixtures/xlayer-circuits.json`) |
+| 24 Solidity contracts compile; 40 tests pass on a local EVM | REAL | `npm test` |
+| Solidity TAP-02 decoder agrees with an independent JS decoder on 9 circuits fetched from **live X Layer mainnet** | REAL | `npm test` (fixture: `test/fixtures/xlayer-circuits.json`) |
 | Decoder agrees with each processor's own `circuitInfo().gateCount` on all 6 non-REF live circuits | REAL | `npm run verify:xlayer` |
-| 436 real TapeOut processors exist on X Layer; factory/beacon/opener/payments code verified at the TAP-02/TAP-10 addresses | REAL | `npm run verify:xlayer` (chainId 196, eth_getCode + eth_call) |
-| `TapeOutV2Adapter` implements the real TAP-02/TAP-10 ABI and plugs into the unchanged core contracts | REAL | `npm test` (last test: full attestation → gate check) |
-| REF closure walked **off-chain** (`verify:refs`) | REAL (off-chain) | `npm run verify:refs` — matches `circuitInfo.gateCount` |
-| On-chain dependency discovery + policy propagation | REAL | `DependencyAnalyzer` + `checkCallWithDependencies()` — REF targets walked on chain; a stale downstream attestation denies the parent |
-| Dashboard reads real circuits directly in-browser | REAL | `dashboard/explorer.html` — live explorer, no gate deploy needed |
-| Multi-page site with splash, nav, and footer | REAL | `dashboard/index.html` → explorer / how-it-works / gate |
-| Netlist's own contracts deployed on X Layer | **NOT YET** — no private key in this repo | see "Deploying to X Layer" |
-| Protocol-enforced composition checks (all calls forced through the gate) | **NOT VERIFIED** — advisory only | see "Honest limitations" |
-| On-chain recursive REF verification inside the Solidity adapter | **IMPLEMENTED, bounded** — `DependencyAnalyzer` walks REF targets with cycle/missing/limit detection; `checkCallWithDependencies()` applies the policy to every reached circuit | see the A→B→C demo |
+| 436+ real TapeOut processors on X Layer; factory/beacon/opener/payments code verified at TAP-02/TAP-10 addresses | REAL | `npm run verify:xlayer` (chainId 196, `eth_getCode` + `eth_call`) |
+| `TapeOutV2Adapter` implements the real TAP-02/TAP-10 ABI and plugs into unchanged core contracts | REAL | `npm test` |
+| REF closure walked **off-chain** | REAL | `npm run verify:refs` — matches `circuitInfo.gateCount` |
+| **On-chain** REF dependency discovery + recursive policy propagation | REAL | `DependencyAnalyzer` + `checkCallWithDependencies()` — a stale downstream attestation denies the parent |
+| Live demo reads real circuits directly in-browser | REAL | `dashboard/explorer.html` — no gate deploy required |
+| Netlist's own contracts deployed on X Layer | **NOT DEPLOYED** — no private key here. **Not required by the official brief**: "Interfaces and other components do not need to be deployed onchain" | [`research/hackathon-intelligence.md` §8] |
+| Protocol-enforced composition (TapeOut itself calls the gate) | **NOT VERIFIED** — advisory pre-flight only | see "Honest limitations" |
 
 Re-fetch the fixture any time with `node scripts/fetch-xlayer-fixtures.js`
 (requires network). The fixture is committed so tests never depend on network.
