@@ -3,10 +3,13 @@ pragma solidity ^0.8.24;
 
 import {ProcessorAdapterRegistry} from "../ProcessorAdapterRegistry.sol";
 import {TapRefs} from "../libraries/TapRefs.sol";
+import {TapNetlist} from "../libraries/TapNetlist.sol";
 
 interface INetlistReader {
     function netlist(address processor, uint256 tokenId) external view returns (bytes memory);
     function circuitExists(address processor, uint256 tokenId) external view returns (bool);
+    function circuitInfo(address processor, uint256 tokenId)
+        external view returns (uint32 nIn, uint32 nOut, uint32 nState, uint32 gateCount);
 }
 
 /// @title DependencyAnalyzer
@@ -195,10 +198,44 @@ contract DependencyAnalyzer {
             return;
         }
 
+        // The production reader is TapeOutV2Adapter, which exposes circuitInfo.
+        // Validate every readable netlist against its declared input/output arity.
+        (bool rootInfoOk, bytes memory rootInfoData) = address(netlistReader).staticcall(
+            abi.encodeWithSelector(INetlistReader.circuitInfo.selector, processor, tokenId)
+        );
+        if (rootInfoOk && rootInfoData.length >= 128) {
+            (uint32 nIn, uint32 nOut, , ) = abi.decode(rootInfoData, (uint32, uint32, uint32, uint32));
+            nl.analyze(nIn, nOut);
+        }
+
         TapRefs.Target[] memory refs = nl.targets();
         if (depth == 0) {
             report.directRefs = uint32(refs.length);
             (report.directDepsCount, report.directDepsHash) = _directDependencyHash(refs);
+        }
+
+        // When the configured reader exposes circuitInfo, REF targets must
+        // exist and match the exact arity encoded into the parent record.
+        if (rootInfoOk && rootInfoData.length >= 128) {
+            for (uint256 i = 0; i < refs.length; i++) {
+                (bool targetInfoOk, bytes memory targetInfoData) = address(netlistReader).staticcall(
+                    abi.encodeWithSelector(
+                        INetlistReader.circuitInfo.selector,
+                        refs[i].processor,
+                        refs[i].id
+                    )
+                );
+                if (!targetInfoOk || targetInfoData.length < 128) {
+                    report.missingTarget = true;
+                    return;
+                }
+                (uint32 targetNIn, uint32 targetNOut, , ) =
+                    abi.decode(targetInfoData, (uint32, uint32, uint32, uint32));
+                if (targetNIn != refs[i].nIns || targetNOut != refs[i].nOuts) {
+                    report.missingTarget = true;
+                    return;
+                }
+            }
         }
         if (depth >= maxDepth && refs.length > 0) {
             report.truncated = true;
