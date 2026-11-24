@@ -4,7 +4,8 @@ const { loadArtifacts, setupProvider, deploy } = require("./helpers");
 
 function ref(processor, id) {
   return "0x02" + processor.slice(2).toLowerCase() +
-    BigInt(id).toString(16).padStart(16, "0") + "00" + "01";
+    BigInt(id).toString(16).padStart(16, "0") + "02" + "01" +
+    "000000" + "000001";
 }
 
 describe("CompositionGate — dependency-aware policy", function () {
@@ -66,10 +67,9 @@ describe("CompositionGate — dependency-aware policy", function () {
   });
 
   async function setCircuit(id, netlist) {
-    const hasRef = netlist.toLowerCase().includes("02");
     await (await processor.setCircuit(
       id,
-      hasRef ? 0 : 2,
+      2,
       1,
       0,
       hasRef ? 1 : 1,
