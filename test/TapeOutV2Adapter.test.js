@@ -243,6 +243,11 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
     const plain = await gate.checkCall(p, 1, policy);
     expect(plain[0]).to.equal(true); // the direct-only check misses the risk
 
+    const gasPolicy = [500000, 0, 3, true, true, true, true, false];
+    const [gasAllowed, gasReason] = await gate.checkCall(p, 1, gasPolicy);
+    expect(gasAllowed).to.equal(false);
+    expect(gasReason).to.equal("gas-unbounded");
+
     const deep = await gate.checkCallWithDependencies(p, 1, policy,
       await analyzer.getAddress(), 8, 32);
     expect(deep[0]).to.equal(false);
