@@ -83,6 +83,9 @@ function decodeTapNetlist(hex, nIn, nOut = 1) {
   }
 
   if (signals - 2 - nIn < nOut) throw new Error("too few signals for outputs");
+  for (const r of records) {
+    if (r.op === 0x01 && r.inputs[0] >= signals) throw new Error("LATCH d out of range");
+  }
 
   // NAND and REF outputs are available in record order. LATCH outputs are
   // previous-beat state and therefore have depth zero. Their D input is a
