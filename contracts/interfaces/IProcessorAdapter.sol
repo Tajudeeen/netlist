@@ -15,6 +15,7 @@ pragma solidity ^0.8.24;
 /// X Layer implementation must still be independently compared with the
 /// normative TAP-02 reference before a full conformance claim is made.
 interface IProcessorAdapter {
+    function trustIdentity(address processor) external view returns (bytes32);
     function gateCount(address processor, uint256 tokenId) external view returns (uint32);
     function circuitDepth(address processor, uint256 tokenId) external view returns (uint32);
     function netlistHash(address processor, uint256 tokenId) external view returns (bytes32);
