@@ -218,7 +218,7 @@ contract CompositionRegistry {
         uint256 tokenId
     ) public view returns (Attestation memory a, bool stale) {
         a = _publisherAttestations[processor][tokenId];
-        return _withStaleness(processor, tokenId, a);
+        return _withStaleness(processor, tokenId, a, true);
     }
 
     /// @notice Read a circuit's auditor attestation, same staleness semantics.
@@ -227,13 +227,14 @@ contract CompositionRegistry {
         uint256 tokenId
     ) public view returns (Attestation memory a, bool stale) {
         a = _auditorAttestations[processor][tokenId];
-        return _withStaleness(processor, tokenId, a);
+        return _withStaleness(processor, tokenId, a, false);
     }
 
     function _withStaleness(
         address processor,
         uint256 tokenId,
-        Attestation memory a
+        Attestation memory a,
+        bool requireCurrentHolder
     ) private view returns (Attestation memory, bool stale) {
         if (!a.exists) {
             return (a, true);
@@ -243,6 +244,10 @@ contract CompositionRegistry {
             tokenId
         );
         stale = currentHash != a.circuitNetlistHash;
+        if (requireCurrentHolder) {
+            address currentHolder = adapterRegistry.adapterFor(processor).ownerOf(processor, tokenId);
+            stale = stale || currentHolder != a.attestor;
+        }
         return (a, stale);
     }
 
