@@ -77,7 +77,7 @@ contract TapeOutV2Adapter is IProcessorAdapter {
         _;
     }
 
-    function trustIdentity(address processor) external view onlyTapeOutProcessor(processor) returns (bytes32) {
+    function trustIdentity(address processor) external view override onlyTapeOutProcessor(processor) returns (bytes32) {
         return keccak256(abi.encode(
             address(factory),
             address(factory).codehash,
