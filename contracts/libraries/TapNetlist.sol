@@ -21,7 +21,7 @@ library TapNetlist {
         uint32 gateCount; // top-level NAND + LATCH records only
         uint32 depth; // local combinational / latch-D critical path; REF internals excluded
         uint32 signals;
-        uint16 refCount;
+        uint32 refCount;
         bool hasForwardLatch;
         bool hasRef;
     }
