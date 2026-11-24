@@ -53,6 +53,7 @@ contract CompositionGate {
         // Layer 1, derived
         uint32 gateCount;
         uint32 depth;
+        bool gateCountComplete;
         uint256 estimatedGas; // see gasPerGate notes below — a flat estimate, not a proven bound
         // Layer 2, declared
         bool hasPublisherAttestation;
@@ -110,6 +111,7 @@ contract CompositionGate {
 
         r.gateCount = p.gateCount(processor, tokenId);
         r.depth = p.circuitDepth(processor, tokenId);
+        r.gateCountComplete = p.gateCountIsComplete(processor, tokenId);
         r.estimatedGas = uint256(r.gateCount) * gasPerGate;
 
         (
@@ -159,6 +161,9 @@ contract CompositionGate {
     ) private view returns (bool allowed, string memory reason) {
         StatusReport memory r = statusReport(processor, tokenId);
 
+        if (policy.maxEstimatedGas != 0 && !r.gateCountComplete) {
+            return (false, "gas-unbounded");
+        }
         if (
             policy.maxEstimatedGas != 0 &&
             r.estimatedGas > policy.maxEstimatedGas
