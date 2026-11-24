@@ -266,6 +266,19 @@ contract CompositionGate {
             return (false, "deps-count");
         }
 
+        // Publisher declarations are checked against canonical unique direct REF targets.
+        (CompositionRegistry.Attestation memory publisher, ) =
+            registry.getPublisherAttestation(processor, tokenId);
+        if (
+            publisher.exists &&
+            (
+                publisher.declaredDepsCount != dep.directDepsCount ||
+                publisher.depsListHash != dep.directDepsHash
+            )
+        ) {
+            return (false, "dep-declaration-mismatch");
+        }
+
         // Structural completeness is not enough: each reached dependency
         // must itself satisfy the policy. This is what makes a stale
         // downstream attestation propagate to the parent composition.
