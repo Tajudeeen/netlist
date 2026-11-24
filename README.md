@@ -53,6 +53,8 @@ Publisher dependency declarations use a canonical hash: `keccak256(abi.encode(so
 **Layer 3, Network (live, not cached).** Processor seal status and container
 activation, re-read at call time.
 
+For REF circuits, the adapter's local gate count is not a safe expanded-cost bound. `gateCountIsComplete()` is false for REF circuits and for legacy adapters that cannot prove expanded-count semantics. A policy with `maxEstimatedGas` therefore fails closed with `gas-unbounded` until a complete count is available. Non-REF circuits can still be checked against the configured estimate.
+
 `CompositionGate.statusReport()` returns every one of these as its own field.
 `checkCall()` applies a policy on top and returns an allow/deny plus a
 machine-readable reason code. `requireCallAllowed()` does the same check but
