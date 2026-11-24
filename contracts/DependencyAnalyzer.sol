@@ -50,6 +50,9 @@ contract DependencyAnalyzer {
         uint32 visitedCount;
         bytes32[] stack;
         bytes32[] visited;
+        uint32[] subtreeInstances;
+        uint32[] subtreeDepths;
+        bool[] analyzed;
     }
 
     struct PinExpectation {
@@ -88,6 +91,9 @@ contract DependencyAnalyzer {
         traversal.maxCircuits = maxCircuits;
         traversal.stack = new bytes32[](uint256(maxDepth) + 1);
         traversal.visited = new bytes32[](maxCircuits);
+        traversal.subtreeInstances = new uint32[](maxCircuits);
+        traversal.subtreeDepths = new uint32[](maxCircuits);
+        traversal.analyzed = new bool[](maxCircuits);
 
         _walk(processor, tokenId, 0, PinExpectation(0, 0, false), traversal, report);
         report.complete = !report.cycleDetected && !report.missingTarget && !report.truncated;
@@ -190,16 +196,9 @@ contract DependencyAnalyzer {
         Traversal memory traversal,
         DependencyReport memory report
     ) private view {
-        // Every invocation is one expanded evaluation instance, including a
-        // repeated circuit reached through another REF edge. Bound work before
-        // doing any external reads or parsing.
-        if (report.expandedInstances >= MAX_EXPANDED_INSTANCES) {
-            report.truncated = true;
-            return;
-        }
-        report.expandedInstances++;
-
         bytes32 key = keccak256(abi.encodePacked(processor, tokenId));
+
+        // Detect an active-path cycle before consulting the completed-node cache.
         for (uint256 i = 0; i < depth; i++) {
             if (traversal.stack[i] == key) {
                 report.cycleDetected = true;
@@ -207,19 +206,46 @@ contract DependencyAnalyzer {
             }
         }
 
-        bool seen;
+        uint256 cacheIndex = type(uint256).max;
         for (uint256 i = 0; i < traversal.visitedCount; i++) {
             if (traversal.visited[i] == key) {
-                seen = true;
+                cacheIndex = i;
                 break;
             }
         }
-        if (!seen) {
+
+        // A previously completed subtree can be accounted for in constant
+        // graph work. Its execution multiplicity still counts every node.
+        if (cacheIndex != type(uint256).max && traversal.analyzed[cacheIndex]) {
+            uint32 instances = traversal.subtreeInstances[cacheIndex];
+            if (instances > MAX_EXPANDED_INSTANCES - report.expandedInstances) {
+                report.expandedInstances = MAX_EXPANDED_INSTANCES;
+                report.truncated = true;
+                return;
+            }
+            report.expandedInstances += instances;
+            uint32 deepest = depth + traversal.subtreeDepths[cacheIndex];
+            if (deepest > report.maxDepth) report.maxDepth = deepest;
+            if (deepest > traversal.maxDepth) {
+                report.truncated = true;
+            }
+            return;
+        }
+
+        if (report.expandedInstances >= MAX_EXPANDED_INSTANCES) {
+            report.truncated = true;
+            return;
+        }
+        uint32 initialInstances = report.expandedInstances;
+        report.expandedInstances++;
+
+        if (cacheIndex == type(uint256).max) {
             if (traversal.visitedCount >= traversal.maxCircuits) {
                 report.truncated = true;
                 return;
             }
-            traversal.visited[traversal.visitedCount] = key;
+            cacheIndex = traversal.visitedCount;
+            traversal.visited[cacheIndex] = key;
             traversal.visitedCount++;
             report.totalCircuits = traversal.visitedCount;
             if (depth > 0) {
@@ -269,5 +295,9 @@ contract DependencyAnalyzer {
             );
             if (report.truncated || report.cycleDetected || report.missingTarget) return;
         }
+
+        traversal.subtreeInstances[cacheIndex] = report.expandedInstances - initialInstances;
+        traversal.subtreeDepths[cacheIndex] = report.maxDepth - depth;
+        traversal.analyzed[cacheIndex] = true;
     }
 }
