@@ -323,3 +323,12 @@ The first implementation pass is on branch `fix/protocol-correctness-and-trust-2
 7. Review the final PR diff and deployment script before merge.
 
 Do not describe the current branch as production-audited or mainnet-verified.
+
+
+### Additional remediation
+
+- The production analyzer reader is now the real `TapeOutV2Adapter`, not the test-only mock. It exposes `circuitInfo`; the analyzer validates the root netlist and compares every REF target's declared input/output arity when this production reader is configured.
+- The deployment registers TapeOutV2Adapter as the registry's default adapter. Processor-specific overrides remain possible, and the adapter itself checks factory registration before reading a processor.
+- A canonical direct dependency commitment is now derived from sorted, unique direct REF targets. The dependency-aware gate compares it with the publisher's declared count and hash.
+- Gas policy now fails closed for REF circuits and adapters that cannot prove their gate count is complete. The local gate count is not treated as an expanded gas bound. A non-REF circuit can still be checked against the configured estimate.
+- The CI run on the branch before these latest gas-policy changes completed with 59 passing tests. A fresh run is in progress for the current head.
