@@ -1,5 +1,6 @@
 const { expect } = require("chai");
-const { parseRefs } = require("../scripts/ref-closure");
+const { parseRefs, resolveClosure } = require("../scripts/ref-closure");
+const { loadArtifacts, setupProvider, deploy } = require("./helpers");
 
 // Literal TAP-02 REF record: 0x02 + cpu(20) + id(u64) + nIns=0 + nOuts=1.
 const CPU = "0xf044d395c91e77459e6b2155015e14f0dd9b349f";
@@ -38,7 +39,45 @@ describe("REF closure parser (TAP-02 §2)", function () {
 });
 
 describe("REF closure resolver", function () {
-  // Live-network tests live in scripts/verify-ref.js (npm run verify:refs)
-  // so `npm test` stays fully offline. The unit tests above cover parsing;
-  // verify-ref.js proves the resolver against real X Layer circuits.
+  let artifacts, server, provider, signer, processor;
+
+  before(async function () {
+    artifacts = loadArtifacts();
+    const setup = await setupProvider();
+    server = setup.server;
+    provider = setup.provider;
+    signer = await provider.getSigner(0);
+  });
+
+  after(async function () {
+    await server.disconnect();
+  });
+
+  beforeEach(async function () {
+    processor = await deploy(artifacts, "MockProcessorV2", signer);
+  });
+
+  it("deduplicates unique circuits but counts repeated REF instances and expanded gates", async function () {
+    const cpu = await processor.getAddress();
+    const refWithTwoInputs = (id) =>
+      "0x02" + cpu.slice(2).toLowerCase() +
+      BigInt(id).toString(16).padStart(16, "0") + "02" + "01" +
+      "000000" + "000001";
+
+    await (await processor.setCircuit(4, 2, 1, 0, 1, NAND, ethers.ZeroAddress)).wait();
+    await (await processor.setCircuit(2, 2, 1, 0, 1, refWithTwoInputs(4), ethers.ZeroAddress)).wait();
+    await (await processor.setCircuit(3, 2, 1, 0, 1, refWithTwoInputs(4), ethers.ZeroAddress)).wait();
+    const root = refWithTwoInputs(2) + refWithTwoInputs(3).slice(2);
+    await (await processor.setCircuit(1, 2, 1, 0, 2, root, ethers.ZeroAddress)).wait();
+
+    const iface = new ethers.Interface([
+      "function circuitInfo(uint256) view returns (uint32 nIn, uint32 nOut, uint32 nState, uint32 gateCount)",
+      "function netlist(uint256) view returns (bytes)",
+    ]);
+    const report = await resolveClosure(provider, iface, cpu, 1);
+    expect(report.uniqueCircuitCount).to.equal(4);
+    expect(report.expandedInstanceCount).to.equal(5);
+    expect(report.expandedGateCount).to.equal(2);
+    expect(report.expandedStateCount).to.equal(0);
+  });
 });
