@@ -77,17 +77,33 @@ contract TapeOutV2Adapter is IProcessorAdapter {
         _;
     }
 
+    function trustIdentity(address processor) external view override onlyTapeOutProcessor(processor) returns (bytes32) {
+        return keccak256(abi.encode(
+            address(factory),
+            address(factory).codehash,
+            address(beacon),
+            beacon.implementation(),
+            beacon.owner(),
+            factory.isSealed(),
+            pinnedCircuitImplementation
+        ));
+    }
+
     function _processor(address processor) private pure returns (ITapeOutProcessorV2) {
         return ITapeOutProcessorV2(processor);
     }
 
     function _analyze(address processor, uint256 tokenId) private view returns (TapNetlist.Analysis memory) {
         ITapeOutProcessorV2 p = _processor(processor);
-        (uint32 nIn, , , ) = p.circuitInfo(tokenId);
-        return p.netlist(tokenId).analyze(nIn);
+        (uint32 nIn, uint32 nOut, , ) = p.circuitInfo(tokenId);
+        return p.netlist(tokenId).analyze(nIn, nOut);
     }
 
     /// @notice Top-level NAND+LATCH count decoded from the real netlist bytes.
+    function gateCountIsComplete(address processor, uint256 tokenId) external view override onlyTapeOutProcessor(processor) returns (bool) {
+        return !_analyze(processor, tokenId).hasRef;
+    }
+
     function gateCount(
         address processor,
         uint256 tokenId
@@ -160,6 +176,13 @@ contract TapeOutV2Adapter is IProcessorAdapter {
 
     /// @notice Raw netlist bytes, exposed for dependency analysis. This is
     /// the exact data TapRefs parses — no self-reported dependency list.
+    function circuitInfo(
+        address processor,
+        uint256 tokenId
+    ) external view onlyTapeOutProcessor(processor) returns (uint32 nIn, uint32 nOut, uint32 nState, uint32 gateCount) {
+        return _processor(processor).circuitInfo(tokenId);
+    }
+
     function netlist(
         address processor,
         uint256 tokenId
@@ -201,8 +224,8 @@ contract TapeOutV2Adapter is IProcessorAdapter {
     {
         ITapeOutProcessorV2 p = _processor(processor);
         bytes memory nl = p.netlist(tokenId);
-        (uint32 nIn, , , uint32 reported) = p.circuitInfo(tokenId);
-        analysis = nl.analyze(nIn);
+        (uint32 nIn, uint32 nOut, , uint32 reported) = p.circuitInfo(tokenId);
+        analysis = nl.analyze(nIn, nOut);
         if (!analysis.hasRef && analysis.gateCount != reported) {
             revert GateCountMismatch(analysis.gateCount, reported);
         }

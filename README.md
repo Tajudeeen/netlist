@@ -46,13 +46,14 @@ exist here.
   link. Kept in its own storage track so a publisher's self-assessment never
   gets confused with third-party review.
 
-Both tracks are versioned (re-attesting increments a counter rather than
-silently overwriting) and both are checked for staleness against the live
-netlist hash on every read. An attestation whose circuit has since changed is
-reported stale immediately, never silently treated as current.
+Both tracks are versioned (re-attesting increments a counter rather than silently overwriting). Publisher attestations are checked against the live netlist hash and current NFT holder. Both publisher and auditor attestations are also bound to the adapter's processor trust identity, including the beacon implementation on the real TapeOut adapter. A netlist change, ownership transfer, or processor implementation change makes the old attestation stale immediately.
+
+Publisher dependency declarations use a canonical hash: `keccak256(abi.encode(sortedUniqueDirectProcessorAddresses, correspondingSortedCircuitIds))`. The on-chain analyzer derives the unique direct REF targets from the actual netlist, and the dependency-aware gate rejects a count or hash mismatch.
 
 **Layer 3, Network (live, not cached).** Processor seal status and container
 activation, re-read at call time.
+
+For REF circuits, the adapter's local gate count is not a safe expanded-cost bound. `gateCountIsComplete()` is false for REF circuits and for legacy adapters that cannot prove expanded-count semantics. A policy with `maxEstimatedGas` therefore fails closed with `gas-unbounded` until a complete count is available. Non-REF circuits can still be checked against the configured estimate.
 
 `CompositionGate.statusReport()` returns every one of these as its own field.
 `checkCall()` applies a policy on top and returns an allow/deny plus a

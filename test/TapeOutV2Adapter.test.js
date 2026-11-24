@@ -83,7 +83,7 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
         )
       ).wait();
 
-      const expected = decodeTapNetlist(c.netlist, c.nIn);
+      const expected = decodeTapNetlist(c.netlist, c.nIn, c.nOut);
       const analysis = await adapter.analyzeCircuit(
         await processor.getAddress(),
         c.tokenId
@@ -141,16 +141,16 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
     );
   });
 
-  it("treats a forward LATCH as feedback, bounded depth of 1", async function () {
+  it("treats a forward LATCH as feedback with previous-beat output depth zero", async function () {
     await (
       await setCircuit(1, 0, 1, 1, 1, FEEDBACK_LATCH, await holder.getAddress())
     ).wait();
     const analysis = await adapter.analyzeCircuit(await processor.getAddress(), 1);
     expect(analysis.analysis.hasForwardLatch).to.equal(true);
-    expect(Number(analysis.analysis.depth)).to.equal(1);
+    expect(Number(analysis.analysis.depth)).to.equal(0);
     // independent JS oracle agrees
     expect(Number(analysis.analysis.depth)).to.equal(
-      decodeTapNetlist(FEEDBACK_LATCH, 0).depth
+      decodeTapNetlist(FEEDBACK_LATCH, 0, 1).depth
     );
   });
 
@@ -231,11 +231,11 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
         await holder.getAddress())
     ).wait();
     await (await factory.setCPU(p, true)).wait();
+    await (await factory.setSealed(true)).wait();
+    await (await beacon.setOwner(await factory.getAddress())).wait();
     await (
       await registry.connect(holder).attestAsPublisher(p, 1, 0, ethers.ZeroHash, 1, "")
     ).wait();
-    await (await factory.setSealed(true)).wait();
-    await (await beacon.setOwner(await factory.getAddress())).wait();
     const container = await adapter.containerOf(p, 1);
     await (await payments.setLive(container, true)).wait();
 
@@ -243,10 +243,34 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
     const plain = await gate.checkCall(p, 1, policy);
     expect(plain[0]).to.equal(true); // the direct-only check misses the risk
 
+    const gasPolicy = [500000, 0, 3, true, true, true, true, false];
+    const [gasAllowed, gasReason] = await gate.checkCall(p, 1, gasPolicy);
+    expect(gasAllowed).to.equal(false);
+    expect(gasReason).to.equal("gas-unbounded");
+
     const deep = await gate.checkCallWithDependencies(p, 1, policy,
       await analyzer.getAddress(), 8, 32);
     expect(deep[0]).to.equal(false);
     expect(deep[1]).to.equal("dep-missing");
+  });
+
+  it("validates REF target pin arity when the live adapter is the analyzer reader", async function () {
+    const adapterRegistry = await deploy(artifacts, "ProcessorAdapterRegistry", deployer);
+    const p = await processor.getAddress();
+    await (await adapterRegistry.setAdapter(p, await adapter.getAddress())).wait();
+    const analyzer = await deploy(artifacts, "DependencyAnalyzer", deployer, [
+      await adapterRegistry.getAddress(), await adapter.getAddress(),
+    ]);
+
+    // Parent declares a zero-input REF, while the target circuit has two inputs.
+    const badRef = "0x02" + p.slice(2).toLowerCase() +
+      "0000000000000002" + "00" + "01";
+    await (await setCircuit(1, 2, 1, 0, 1, badRef, await holder.getAddress())).wait();
+    await (await setCircuit(2, 2, 1, 0, 1, THREE_NAND, await holder.getAddress())).wait();
+
+    const report = await analyzer.analyze(p, 1, 8, 32);
+    expect(report.missingTarget).to.equal(true);
+    expect(report.complete).to.equal(false);
   });
 
   it("works unchanged as an IProcessorAdapter for CompositionRegistry", async function () {
@@ -279,6 +303,8 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
     await (
       await factory.setCPU(await processor.getAddress(), true)
     ).wait();
+    await (await factory.setSealed(true)).wait();
+    await (await beacon.setOwner(await factory.getAddress())).wait();
     await (
       await registry
         .connect(holder)
@@ -291,8 +317,6 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
           ""
         )
     ).wait();
-    await (await factory.setSealed(true)).wait();
-    await (await beacon.setOwner(await factory.getAddress())).wait();
     const container = await adapter.containerOf(await processor.getAddress(), 1);
     await (await payments.setLive(container, true)).wait();
     const policy = Array.from(await gate.defaultPolicy());
@@ -303,5 +327,25 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
     );
     expect(allowed).to.equal(true);
     expect(reason).to.equal("");
+
+    const gasPolicy = [1000, 0, 3, true, true, true, true, false];
+    const [gasAllowed, gasReason] = await gate.checkCall(
+      await processor.getAddress(), 1, gasPolicy
+    );
+    expect(gasAllowed).to.equal(false);
+    expect(gasReason).to.equal("gas-estimate");
+
+    const [attestation, staleBefore] = await registry.getPublisherAttestation(
+      await processor.getAddress(), 1
+    );
+    expect(attestation.exists).to.equal(true);
+    expect(staleBefore).to.equal(false);
+
+    // A beacon implementation change changes the processor trust identity.
+    await (await beacon.setImplementation(ethers.ZeroAddress)).wait();
+    const [, staleAfter] = await registry.getPublisherAttestation(
+      await processor.getAddress(), 1
+    );
+    expect(staleAfter).to.equal(true);
   });
 });

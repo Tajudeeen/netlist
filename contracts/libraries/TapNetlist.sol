@@ -1,40 +1,29 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @title TAP-02 netlist decoder (on-chain, bounded, single pass per stage)
-/// @notice Parses the literal TAP-02 byte format (§2) in two bounded passes:
-///   1. validate every record and count total signals / gates / refs;
-///   2. allocate an exact-size depth array and compute longest paths.
-///
-/// Decoders parse untrusted bytes: every read checks remaining length before
-/// advancing, and nothing is allocated in proportion to an unvalidated count
-/// (TAP-02 §7 requirement 2). The bytes come straight from the processor's
-/// `netlist(id)` — nothing here is publisher self-reported.
-///
-/// Signal numbering (§2): 0 = const 0, 1 = const 1, 2..2+nIn-1 = inputs,
-/// then one signal per NAND/LATCH record and nOuts signals per REF record.
-/// NAND/REF operands must point backwards; LATCH `d` may point forward
-/// (§3 condition 5 — that is how feedback is built).
+/// @title TAP-02 netlist structural decoder
+/// @notice Bounded parser for TAP-02 §2/§3. REF target existence, processor
+/// registration, arity and recursive size are checked by the dependency
+/// resolver because they require external circuit reads.
 library TapNetlist {
     uint8 internal constant OP_NAND = 0x00;
     uint8 internal constant OP_LATCH = 0x01;
     uint8 internal constant OP_REF = 0x02;
 
-    // §3 cond 7/8: S <= 2^24, gateCount <= 2^32-1. Keep depth well below
-    // uint32 max so a hostile netlist cannot wrap the counter.
     uint32 internal constant MAX_DEPTH = 1_000_000;
-    uint256 internal constant MAX_SIGNALS = 0x00ffffff;
+    uint256 internal constant MAX_SIGNALS = 1 << 24;
+    uint32 internal constant MAX_PINS = 1 << 16;
 
     error MalformedNetlist(string reason);
     error NetlistTooLarge();
 
     struct Analysis {
-        uint32 gateCount; // top-level NAND + LATCH records
-        uint32 depth; // longest combinational path in gate hops
-        uint32 signals; // S from §3
-        uint16 refCount; // REF records in this netlist
-        bool hasForwardLatch; // a LATCH whose d points forward (feedback)
-        bool hasRef; // true when the circuit composes other circuits
+        uint32 gateCount; // top-level NAND + LATCH records only
+        uint32 depth; // local combinational / latch-D critical path; REF internals excluded
+        uint32 signals;
+        uint32 refCount;
+        bool hasForwardLatch;
+        bool hasRef;
     }
 
     struct RefInfo {
@@ -44,15 +33,23 @@ library TapNetlist {
         uint256 nOuts;
     }
 
-    /// @notice Decode and analyse a TAP-02 netlist.
-    /// @param b raw `netlist(id)` bytes.
-    /// @param nIn `nIn` from `circuitInfo(id)`.
+    /// @notice Backwards-compatible structural check when output count is unknown.
+    /// @dev New call sites SHOULD use analyze(b, nIn, nOut) to enforce §3 condition 3.
     function analyze(bytes memory b, uint32 nIn) internal pure returns (Analysis memory a) {
+        return analyze(b, nIn, 1);
+    }
+
+    /// @notice Decode and structurally validate a TAP-02 netlist.
+    function analyze(bytes memory b, uint32 nIn, uint32 nOut) internal pure returns (Analysis memory a) {
+        if (nIn > MAX_PINS || nOut == 0 || nOut > MAX_PINS) {
+            revert MalformedNetlist("nIn/nOut out of range");
+        }
+
         uint256 len = b.length;
         uint256 signals = 2 + uint256(nIn);
+        uint256 pos;
 
-        // ---- Pass 1: validate structure, count signals/gates/refs ----
-        uint256 pos = 0;
+        // Pass 1: validate complete records and count the final signal space.
         while (pos < len) {
             uint8 op = uint8(b[pos++]);
             if (op == OP_NAND) {
@@ -60,14 +57,15 @@ library TapNetlist {
                 uint256 ai = _u24(b, pos);
                 uint256 bi = _u24(b, pos + 3);
                 pos += 6;
-                if (ai >= signals || bi >= signals) revert MalformedNetlist("NAND: future signal");
+                if (ai >= signals || bi >= signals) {
+                    revert MalformedNetlist("NAND: future signal");
+                }
                 signals++;
                 a.gateCount++;
             } else if (op == OP_LATCH) {
                 _need(len, pos, 3);
                 uint256 di = _u24(b, pos);
                 pos += 3;
-                if (di > MAX_SIGNALS) revert MalformedNetlist("LATCH d out of range");
                 if (di >= signals) a.hasForwardLatch = true;
                 signals++;
                 a.gateCount++;
@@ -82,9 +80,31 @@ library TapNetlist {
             }
             if (signals > MAX_SIGNALS) revert NetlistTooLarge();
         }
+
+        if (signals - (2 + uint256(nIn)) < nOut) {
+            revert MalformedNetlist("too few signals for outputs");
+        }
         a.signals = uint32(signals);
 
-        // ---- Pass 2: longest path per signal, exact allocation ----
+        // LATCH D may point forward, but must still be inside final S.
+        pos = 0;
+        while (pos < len) {
+            uint8 op = uint8(b[pos++]);
+            if (op == OP_NAND) {
+                pos += 6;
+            } else if (op == OP_LATCH) {
+                uint256 di = _u24(b, pos);
+                if (di >= signals) revert MalformedNetlist("LATCH d out of range");
+                pos += 3;
+            } else {
+                RefInfo memory r = _readRef(b, len, pos, signals); // REF inputs were validated in pass 1
+                pos = r.nextPos;
+            }
+        }
+
+        // Pass 2: local signal depths. A LATCH output is the previous-beat
+        // state bit, so its current-beat depth is zero. REF internals are
+        // intentionally not guessed here and are resolved separately.
         uint32[] memory best = new uint32[](signals);
         pos = 0;
         uint256 sig = 2 + uint256(nIn);
@@ -98,36 +118,38 @@ library TapNetlist {
                 pos += 6;
                 sig++;
             } else if (op == OP_LATCH) {
-                uint256 di = _u24(b, pos);
-                uint32 parent = di < sig ? best[di] : 0; // forward d = feedback
-                uint32 d = parent + 1;
-                best[sig] = d;
-                if (d > a.depth) a.depth = d;
+                best[sig] = 0;
                 pos += 3;
                 sig++;
             } else {
                 RefInfo memory r = _readRef(b, len, pos, sig);
-                uint32 parent = 0;
-                for (uint256 i = 0; i < r.nIns; i++) {
-                    uint32 pd = best[_u24(b, r.insStart + i * 3)];
-                    if (pd > parent) parent = pd;
-                }
-                uint32 d = parent + 1; // conservative: REF internals not decoded
-                if (d > a.depth) a.depth = d;
-                for (uint256 i = 0; i < r.nOuts; i++) best[sig + i] = d;
+                for (uint256 i = 0; i < r.nOuts; i++) best[sig + i] = 0;
                 pos = r.nextPos;
                 sig += r.nOuts;
             }
         }
+
+        // Pass 3: latch D paths can point forward, so inspect them after all
+        // combinational outputs have their local depths.
+        pos = 0;
+        while (pos < len) {
+            uint8 op = uint8(b[pos++]);
+            if (op == OP_NAND) {
+                pos += 6;
+            } else if (op == OP_LATCH) {
+                uint32 d = best[_u24(b, pos)];
+                if (d > a.depth) a.depth = d;
+                pos += 3;
+            } else {
+                RefInfo memory r = _readRef(b, len, pos, signals);
+                pos = r.nextPos;
+            }
+        }
     }
 
-    /// @dev Validates a REF record (both passes) without allocating by count.
-    function _readRef(
-        bytes memory b,
-        uint256 len,
-        uint256 pos,
-        uint256 signals
-    ) private pure returns (RefInfo memory r) {
+    function _readRef(bytes memory b, uint256 len, uint256 pos, uint256 signals)
+        private pure returns (RefInfo memory r)
+    {
         _need(len, pos, 30);
         r.nIns = uint8(b[pos + 28]);
         r.nOuts = uint8(b[pos + 29]);
@@ -135,17 +157,21 @@ library TapNetlist {
         _need(len, r.insStart, r.nIns * 3);
         if (r.nOuts == 0) revert MalformedNetlist("REF: no outputs");
         for (uint256 i = 0; i < r.nIns; i++) {
-            if (_u24(b, r.insStart + i * 3) >= signals) revert MalformedNetlist("REF: future signal");
+            if (_u24(b, r.insStart + i * 3) >= signals) {
+                revert MalformedNetlist("REF: future signal");
+            }
         }
         r.nextPos = r.insStart + r.nIns * 3;
     }
 
     function _need(uint256 len, uint256 pos, uint256 n) private pure {
-        if (len - pos < n) revert MalformedNetlist("truncated record");
+        if (pos > len || len - pos < n) revert MalformedNetlist("truncated record");
     }
 
     function _u24(bytes memory b, uint256 p) private pure returns (uint256) {
-        return (uint256(uint8(b[p])) << 16) | (uint256(uint8(b[p + 1])) << 8) | uint256(uint8(b[p + 2]));
+        return (uint256(uint8(b[p])) << 16) |
+            (uint256(uint8(b[p + 1])) << 8) |
+            uint256(uint8(b[p + 2]));
     }
 
     function _max(uint32 x, uint32 y) private pure returns (uint32) {

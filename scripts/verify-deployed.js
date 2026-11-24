@@ -54,6 +54,10 @@ async function main() {
   const adapterRegistry = new ethers.Contract(adapterRegistryAddr, artifacts.ProcessorAdapterRegistry.abi, provider);
   const adapterAddr = await adapterRegistry.adapterFor(processor);
   check(adapterAddr !== ethers.ZeroAddress, "real adapter configured", adapterAddr);
+  const defaultAdapter = await adapterRegistry.defaultAdapter();
+  check(defaultAdapter.toLowerCase() === adapterAddr.toLowerCase(), "default adapter resolves through the registry");
+  const analyzerReader = await analyzer.netlistReader();
+  check(analyzerReader.toLowerCase() === adapterAddr.toLowerCase(), "analyzer reads through the live TapeOut adapter");
   const adapter = new ethers.Contract(adapterAddr, artifacts.TapeOutV2Adapter.abi, provider);
 
   // Live reads through the deployed adapter.

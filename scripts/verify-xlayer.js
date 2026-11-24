@@ -1,19 +1,11 @@
-// Live verifier for Netlist's REAL TapeOut adapter on X Layer.
-//
-// Two distinct proofs, kept separate (never collapsed):
-//   A) STATIC: the adapter SOURCE implements IProcessorAdapter and the
-//      TAP-02/TAP-10 selectors/addresses are transcribed from the live specs.
-//   B) LIVE: the exact same decode logic runs against real netlist bytes read
-//      from real processors via eth_call on chain 196, and the decoded gate
-//      count is cross-checked against circuitInfo() from the contract itself.
-//
-// Usage: npm run verify:xlayer
-const fs = require("fs");
-const path = require("path");
+// Block-pinned, multi-RPC verifier for Netlist's X Layer TapeOut adapter.
+// Requires two independent RPC endpoints:
+// XLAYER_RPC_URLS=https://rpc-a,https://rpc-b npm run verify:xlayer
 const { ethers } = require("ethers");
 const { decodeTapNetlist } = require("../test/decoder");
 
-const RPC = process.env.XLAYER_MAINNET_RPC || "https://rpc.xlayer.tech";
+const RPC_URLS = (process.env.XLAYER_RPC_URLS || "")
+  .split(",").map((s) => s.trim()).filter(Boolean);
 const ADDR = {
   factory: "0x1f09DAeFA827f02CBb40967cc91b259763760761",
   beacon: "0xf70d1ed4f62CF3780157B0b421b7E2F45bD0991C",
@@ -21,104 +13,125 @@ const ADDR = {
   opener: "0x536adD8F30f03b69f6fbF29d425A816A0dC50106",
   payments: "0x68809Fd2fb343aA57D0aeB7f33Defe477c9666f9",
 };
-const IFACE = new ethers.Interface([
+const FACTORY_IFACE = new ethers.Interface([
   "function isSealed() view returns (bool)",
   "function cpuCount() view returns (uint256)",
   "function cpuAt(uint256) view returns (address)",
+]);
+const CIRCUIT_IFACE = new ethers.Interface([
   "function circuitInfo(uint256) view returns (uint32 nIn, uint32 nOut, uint32 nState, uint32 gateCount)",
   "function netlist(uint256) view returns (bytes)",
-  "function ownerOf(uint256) view returns (address)",
 ]);
+const BEACON_IFACE = new ethers.Interface(["function implementation() view returns (address)"]);
 
-function line(s = "") {
-  console.log(s);
-}
-
-async function main() {
-  const provider = new ethers.JsonRpcProvider(RPC);
-  const chainId = Number((await provider.send("eth_chainId", [])).toString());
-  const block = await provider.getBlockNumber();
-  if (chainId !== 196) throw new Error(`expected X Layer chain 196, got ${chainId}`);
-
-  line("============================================================");
-  line("NETLIST — live X Layer adapter verification");
-  line("============================================================");
-  line(`RPC:      ${RPC}`);
-  line(`chainId:  ${chainId} (X Layer mainnet)`);
-  line(`block:    ${block}`);
-  line("");
-  line("Addresses (TAP-02 / TAP-10 Deployments, checked with eth_getCode):");
-  for (const [name, addr] of Object.entries(ADDR)) {
-    const code = await provider.send("eth_getCode", [addr, "latest"]);
-    const len = (code.length - 2) / 2;
-    if (len === 0) throw new Error(`${name} has no code at ${addr}`);
-    line(`  ${name.padEnd(22)} ${addr}  (${len} bytes of code)`);
+async function readSnapshot(provider, blockTag) {
+  const block = await provider.getBlock(blockTag);
+  const blockHex = ethers.toQuantity(blockTag);
+  const code = {};
+  for (const [name, address] of Object.entries(ADDR)) {
+    code[name] = await provider.send("eth_getCode", [address, blockHex]);
+    if (code[name] === "0x") throw new Error(`${name} has no code at pinned block ${blockTag}`);
   }
 
-  const factory = new ethers.Contract(ADDR.factory, IFACE, provider);
-  const sealed = await factory.isSealed();
-  const cpuCount = Number(await factory.cpuCount());
-  // Read implementation() via eth_call, not a guessed storage slot: the
-  // L2 beacon's layout differs from the BNB one, so a hardcoded ERC-1967
-  // slot would read zero and be a false alarm.
-  const implIf = new ethers.Interface(["function implementation() view returns (address)"]);
-  const beaconImpl = await (new ethers.Contract(ADDR.beacon, implIf, provider)).implementation();
-  line("");
-  line("Factory / beacon evidence (three independent claims):");
-  line(`  factory.isSealed():          ${sealed}`);
-  line(`  factory.cpuCount():          ${cpuCount} processors`);
-  line(`  beacon implementation():     ${beaconImpl}`);
-  line(`  pinned circuit impl:         ${ADDR.circuitImplementation}`);
-  line(`  implementation matches pin:  ${beaconImpl.toLowerCase() === ADDR.circuitImplementation.toLowerCase()}`);
+  const factory = new ethers.Contract(ADDR.factory, FACTORY_IFACE, provider);
+  const beacon = new ethers.Contract(ADDR.beacon, BEACON_IFACE, provider);
+  const [sealed, cpuCount, implementation] = await Promise.all([
+    factory.isSealed({ blockTag }),
+    factory.cpuCount({ blockTag }),
+    beacon.implementation({ blockTag }),
+  ]);
 
-  line("");
-  line("Live circuit cross-check (decode netlist bytes vs circuitInfo.gateCount):");
-  let checked = 0;
-  let mismatches = 0;
-  let refCircuits = 0;
-  for (let p = 0; p < Math.min(3, cpuCount) && checked < 9; p++) {
-    const cpu = await factory.cpuAt(p);
-    const proc = new ethers.Contract(cpu, IFACE, provider);
-    for (let id = 1; id <= 3; id++) {
+  const circuits = [];
+  for (let p = 0; p < Math.min(3, Number(cpuCount)) && circuits.length < 9; p++) {
+    const cpu = await factory.cpuAt(p, { blockTag });
+    const proc = new ethers.Contract(cpu, CIRCUIT_IFACE, provider);
+    for (let id = 1; id <= 3 && circuits.length < 9; id++) {
       try {
-        const info = await proc.circuitInfo(id);
-        const nl = await proc.netlist(id);
-        const decoded = decodeTapNetlist(nl, Number(info.nIn));
-        const ok = decoded.hasRef || decoded.gateCount === Number(info.gateCount);
-        if (decoded.hasRef) refCircuits++;
-        if (!ok) mismatches++;
-        checked++;
-        line(
-          `  ${cpu.slice(0, 10)}… #${id}: netlist=${(nl.length - 2) / 2}B ` +
-            `decodedGates=${decoded.gateCount} reported=${info.gateCount} ` +
-            `depth=${decoded.depth} ${decoded.hasRef ? "REF" : ok ? "MATCH" : "MISMATCH"}`
-        );
-      } catch {
-        // id may not exist on this processor
+        const [info, nl] = await Promise.all([
+          proc.circuitInfo(id, { blockTag }),
+          proc.netlist(id, { blockTag }),
+        ]);
+        const decoded = decodeTapNetlist(nl, Number(info.nIn), Number(info.nOut));
+        circuits.push({
+          processor: cpu.toLowerCase(),
+          id,
+          netlistHash: ethers.keccak256(nl),
+          nIn: Number(info.nIn),
+          nOut: Number(info.nOut),
+          nState: Number(info.nState),
+          reportedGateCount: Number(info.gateCount),
+          localGateCount: decoded.gateCount,
+          localDepth: decoded.depth,
+          hasRef: decoded.hasRef,
+          refCount: decoded.refCount,
+        });
+      } catch (error) {
+        // A missing circuit id is expected. Malformed data must not be skipped.
+        if (/no circuit/i.test(error.message || "")) continue;
+        throw error;
       }
     }
   }
-  if (checked === 0) throw new Error("no circuits could be read");
-  line("");
-  line(`Checked ${checked} real circuits: ${mismatches} mismatches, ${refCircuits} REF circuits.`);
+  return {
+    blockNumber: blockTag,
+    blockHash: block.hash,
+    codeHashes: Object.fromEntries(Object.entries(code).map(([k, v]) => [k, ethers.keccak256(v)])),
+    sealed,
+    cpuCount: Number(cpuCount),
+    implementation: implementation.toLowerCase(),
+    circuits,
+  };
+}
 
-  line("");
-  line("Honest boundaries (not hidden behind a green checkmark):");
-  line("  - Netlist contracts are NOT deployed on X Layer (no deploy key in this repo).");
-  line("    This verifies the adapter's READ LOGIC against live protocol state; it does");
-  line("    NOT claim a Netlist CompositionGate address exists on chain.");
-  line("  - factory.isSealed() is false and TAP-10 §13.8 also requires beacon.owner()==");
-  line("    factory, which this RPC reports as 0x0. isSealed() therefore fails closed.");
-  line("  - REF circuits' internal depth is not decoded here; depthIsBounded() = false.");
-  line("  - One RPC endpoint is one operator's view, not a quorum (TAP-10 §5.2).");
-
-  if (mismatches > 0) {
-    line("");
-    line("FAILED: Solidity/JS decode disagrees with circuitInfo on at least one circuit.");
-    process.exit(1);
+async function main() {
+  if (RPC_URLS.length < 2) {
+    throw new Error("set XLAYER_RPC_URLS to at least two independent RPC endpoints; one endpoint is not quorum evidence");
   }
-  line("");
-  line("PASS: live decode agrees with on-chain circuitInfo on every non-REF circuit read.");
+  const providers = RPC_URLS.map((url) => new ethers.JsonRpcProvider(url));
+  const chainIds = await Promise.all(providers.map(async (p) => Number((await p.send("eth_chainId", [])).toString())));
+  if (chainIds.some((id) => id !== 196)) throw new Error(`all endpoints must report chain 196, got ${chainIds.join(",")}`);
+
+  const heights = await Promise.all(providers.map((p) => p.getBlockNumber()));
+  const blockTag = Math.min(...heights);
+  const blocks = await Promise.all(providers.map((p) => p.getBlock(blockTag)));
+  if (blocks.some((b) => !b) || blocks.some((b) => b.hash !== blocks[0].hash)) {
+    throw new Error(`RPCs disagree on canonical block ${blockTag}`);
+  }
+
+  const snapshots = await Promise.all(providers.map((p) => readSnapshot(p, blockTag)));
+  const canonical = JSON.stringify(snapshots[0]);
+  for (let i = 1; i < snapshots.length; i++) {
+    if (JSON.stringify(snapshots[i]) !== canonical) {
+      throw new Error(`independent RPC snapshot disagreement at block ${blockTag}`);
+    }
+  }
+
+  const s = snapshots[0];
+  console.log(`X Layer 196, pinned block ${s.blockNumber} (${s.blockHash})`);
+  console.log(`Independent RPCs agreeing: ${providers.length}`);
+  console.log(`Factory processors: ${s.cpuCount}`);
+  console.log(`Factory sealed: ${s.sealed}`);
+  console.log(`Beacon implementation: ${s.implementation}`);
+  console.log(`Implementation matches pinned address: ${s.implementation === ADDR.circuitImplementation.toLowerCase()}`);
+  console.log(`Circuits inspected: ${s.circuits.length}`);
+
+  for (const c of s.circuits) {
+    if (!c.hasRef && c.localGateCount !== c.reportedGateCount) {
+      throw new Error(`local gate count mismatch for ${c.processor} #${c.id}`);
+    }
+    console.log(
+      `  ${c.processor} #${c.id}: localGates=${c.localGateCount}, ` +
+      `reportedExpandedGates=${c.reportedGateCount}, localDepth=${c.localDepth}, ` +
+      `refs=${c.refCount}, hash=${c.netlistHash}`
+    );
+  }
+
+  console.log("\nBoundaries:");
+  console.log("  - The reported gateCount is expanded by TAP-02; localGateCount is only this netlist's own gates.");
+  console.log("  - localDepth excludes referenced circuit internals. Use verify:refs for recursive closure checks.");
+  console.log("  - Matching RPC reads prove agreement at this block, not correctness of the deployed X Layer implementation.");
+  console.log("  - Netlist CompositionGate deployment/enforcement is a separate claim and is not proven by this script.");
+  console.log("\nPASS: pinned multi-RPC reads and structural decoding agree.");
 }
 
 main().catch((e) => {

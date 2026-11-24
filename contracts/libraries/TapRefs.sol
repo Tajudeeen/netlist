@@ -24,6 +24,8 @@ library TapRefs {
     struct Target {
         address processor;
         uint256 id;
+        uint8 nIns;
+        uint8 nOuts;
     }
 
     function targets(bytes memory b) internal pure returns (Target[] memory out) {
@@ -65,7 +67,9 @@ library TapRefs {
             } else {
                 out[i].processor = _addressAt(b, pos);
                 out[i].id = _u64(b, pos + 20);
-                uint256 nIns = uint8(b[pos + 28]);
+                out[i].nIns = uint8(b[pos + 28]);
+                out[i].nOuts = uint8(b[pos + 29]);
+                uint256 nIns = out[i].nIns;
                 pos += 30 + nIns * 3;
                 i++;
             }

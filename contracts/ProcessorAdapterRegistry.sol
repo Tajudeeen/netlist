@@ -16,9 +16,11 @@ import {IProcessorAdapter} from "./interfaces/IProcessorAdapter.sol";
 contract ProcessorAdapterRegistry {
     mapping(address => IProcessorAdapter) private _adapters;
 
+    IProcessorAdapter public defaultAdapter;
     address public owner;
 
     event AdapterSet(address indexed processor, address indexed adapter);
+    event DefaultAdapterSet(address indexed adapter);
 
     error NotOwner();
     error NoAdapterConfigured(address processor);
@@ -37,18 +39,22 @@ contract ProcessorAdapterRegistry {
         emit AdapterSet(processor, adapter);
     }
 
-    /// @notice Resolve the adapter for a processor, or revert loudly.
-    /// Reverting instead of returning address(0) means a misconfigured
-    /// processor fails every call clearly, rather than every derived fact
-    /// silently reading as zero and looking like an empty, harmless circuit.
+    function setDefaultAdapter(address adapter) external onlyOwner {
+        defaultAdapter = IProcessorAdapter(adapter);
+        emit DefaultAdapterSet(adapter);
+    }
+
+    /// @notice Resolve a processor-specific adapter, then the default adapter.
+    /// The adapter itself must still verify that the processor belongs to its factory.
     function adapterFor(address processor) public view returns (IProcessorAdapter) {
         IProcessorAdapter a = _adapters[processor];
+        if (address(a) == address(0)) a = defaultAdapter;
         if (address(a) == address(0)) revert NoAdapterConfigured(processor);
         return a;
     }
 
     function hasAdapter(address processor) external view returns (bool) {
-        return address(_adapters[processor]) != address(0);
+        return address(_adapters[processor]) != address(0) || address(defaultAdapter) != address(0);
     }
 
     function transferOwnership(address newOwner) external onlyOwner {

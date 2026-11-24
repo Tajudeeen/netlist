@@ -139,6 +139,25 @@ describe("CompositionRegistry", function () {
       expect(stale).to.equal(true);
     });
 
+    it("invalidates a publisher attestation after the circuit NFT changes hands", async function () {
+      await (
+        await registry.connect(holder).attestAsPublisher(
+          await mockProcessor.getAddress(), tokenId, 0, ethers.ZeroHash, 1, ""
+        )
+      ).wait();
+
+      await (
+        await mockProcessor.setOwner(tokenId, await impostor.getAddress())
+      ).wait();
+
+      const [attestation, stale] = await registry.getPublisherAttestation(
+        await mockProcessor.getAddress(), tokenId
+      );
+      expect(attestation.exists).to.equal(true);
+      expect(attestation.attestor).to.equal(await holder.getAddress());
+      expect(stale).to.equal(true);
+    });
+
     it("enforces the publisher attestation fee when one is set", async function () {
       const adapterRegistry = await setupAdapter(artifacts, deployer, await mockProcessor.getAddress());
       const paid = await deploy(artifacts, "CompositionRegistry", deployer, [

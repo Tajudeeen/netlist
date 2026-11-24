@@ -156,7 +156,7 @@ describe("CompositionGate", function () {
     expect(reason).to.equal("stale");
   });
 
-  it("denies when declared dependency count exceeds the policy ceiling", async function () {
+  it("refuses to enforce a dependency ceiling from publisher-declared metadata alone", async function () {
     await attestPublisher(10, 1);
 
     const policy = [0, 3, 2, true, true, true, true, false];
@@ -166,7 +166,7 @@ describe("CompositionGate", function () {
       policy
     );
     expect(allowed).to.equal(false);
-    expect(reason).to.equal("deps-count");
+    expect(reason).to.equal("deps-unverified");
   });
 
   it("denies when estimatedGas exceeds the policy limit", async function () {
@@ -179,7 +179,7 @@ describe("CompositionGate", function () {
       policy
     );
     expect(allowed).to.equal(false);
-    expect(reason).to.equal("gas-estimate");
+    expect(reason).to.equal("gas-unbounded");
   });
 
   it("denies when publisher risk tier exceeds the caller's tolerance", async function () {

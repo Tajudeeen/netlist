@@ -53,6 +53,7 @@ contract CompositionGate {
         // Layer 1, derived
         uint32 gateCount;
         uint32 depth;
+        bool gateCountComplete;
         uint256 estimatedGas; // see gasPerGate notes below — a flat estimate, not a proven bound
         // Layer 2, declared
         bool hasPublisherAttestation;
@@ -110,6 +111,7 @@ contract CompositionGate {
 
         r.gateCount = p.gateCount(processor, tokenId);
         r.depth = p.circuitDepth(processor, tokenId);
+        r.gateCountComplete = p.gateCountIsComplete(processor, tokenId);
         r.estimatedGas = uint256(r.gateCount) * gasPerGate;
 
         (
@@ -139,22 +141,38 @@ contract CompositionGate {
     /// @notice Apply a policy against a circuit's status report.
     /// @return allowed Whether the target passes.
     /// @return reason Machine-readable reason when denied, empty when allowed.
-    /// One of: "no-attestation", "stale", "gas-estimate", "deps-count",
-    /// "risk-tier", "unsealed", "container-dead", "no-audit", "audit-stale".
-    /// checkCallWithDependencies() adds "dep-cycle", "dep-missing",
-    /// "dep-unbounded" for incomplete REF closures.
+    /// Reasons include: "no-attestation", "stale", "gas-estimate",
+    /// "deps-count", "deps-unverified", "dep-declaration-mismatch",
+    /// "risk-tier", "unsealed", "container-dead", "no-audit", "audit-stale",
+    /// "dep-cycle", "dep-missing" and "dep-unbounded".
     function checkCall(
         address processor,
         uint256 tokenId,
         GatePolicy calldata policy
     ) public view returns (bool allowed, string memory reason) {
+        return _checkCall(processor, tokenId, policy, false);
+    }
+
+    function _checkCall(
+        address processor,
+        uint256 tokenId,
+        GatePolicy calldata policy,
+        bool dependencyAware
+    ) private view returns (bool allowed, string memory reason) {
         StatusReport memory r = statusReport(processor, tokenId);
 
+        if (policy.maxEstimatedGas != 0 && !r.gateCountComplete) {
+            return (false, "gas-unbounded");
+        }
         if (
             policy.maxEstimatedGas != 0 &&
             r.estimatedGas > policy.maxEstimatedGas
         ) {
             return (false, "gas-estimate");
+        }
+
+        if (policy.maxDepsCount != 0 && !dependencyAware) {
+            return (false, "deps-unverified");
         }
 
         if (!r.hasPublisherAttestation) {
@@ -164,12 +182,6 @@ contract CompositionGate {
         } else {
             if (r.publisherAttestationStale && policy.rejectStale) {
                 return (false, "stale");
-            }
-            if (
-                policy.maxDepsCount != 0 &&
-                r.declaredDepsCount > policy.maxDepsCount
-            ) {
-                return (false, "deps-count");
             }
             if (uint8(r.publisherRiskTier) > uint8(policy.maxRiskTier)) {
                 return (false, "risk-tier");
@@ -245,7 +257,7 @@ contract CompositionGate {
         uint32 maxDepth,
         uint32 maxCircuits
     ) external view returns (bool allowed, string memory reason) {
-        (allowed, reason) = checkCall(processor, tokenId, policy);
+        (allowed, reason) = _checkCall(processor, tokenId, policy, true);
         if (!allowed) return (allowed, reason);
 
         DependencyAnalyzer.DependencyReport memory dep =
@@ -255,13 +267,29 @@ contract CompositionGate {
         if (dep.cycleDetected) return (false, "dep-cycle");
         if (dep.missingTarget) return (false, "dep-missing");
         if (dep.truncated) return (false, "dep-unbounded");
+        if (policy.maxDepsCount != 0 && dep.depCount > policy.maxDepsCount) {
+            return (false, "deps-count");
+        }
+
+        // Publisher declarations are checked against canonical unique direct REF targets.
+        (CompositionRegistry.Attestation memory publisher, ) =
+            registry.getPublisherAttestation(processor, tokenId);
+        if (
+            publisher.exists &&
+            (
+                publisher.declaredDepsCount != dep.directDepsCount ||
+                publisher.depsListHash != dep.directDepsHash
+            )
+        ) {
+            return (false, "dep-declaration-mismatch");
+        }
 
         // Structural completeness is not enough: each reached dependency
         // must itself satisfy the policy. This is what makes a stale
         // downstream attestation propagate to the parent composition.
         for (uint256 i = 0; i < dep.depCount; i++) {
-            (bool depAllowed, string memory depReason) = checkCall(
-                dep.dependencies[i].processor, dep.dependencies[i].tokenId, policy
+            (bool depAllowed, string memory depReason) = _checkCall(
+                dep.dependencies[i].processor, dep.dependencies[i].tokenId, policy, true
             );
             if (!depAllowed) return (false, depReason);
         }

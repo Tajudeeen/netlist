@@ -34,6 +34,7 @@ contract CompositionRegistry {
 
     struct Attestation {
         bytes32 circuitNetlistHash; // netlist hash at the time of attestation
+        bytes32 processorIdentityHash; // processor implementation/trust identity at attestation
         uint32 declaredDepsCount;
         bytes32 depsListHash; // keccak256 of the full declared dependency list
         RiskTier riskTier;
@@ -76,6 +77,7 @@ contract CompositionRegistry {
         uint256 indexed tokenId,
         address indexed attestor,
         bytes32 netlistHash,
+        bytes32 processorIdentityHash,
         uint32 declaredDepsCount,
         RiskTier riskTier,
         uint32 version
@@ -86,6 +88,7 @@ contract CompositionRegistry {
         uint256 indexed tokenId,
         address indexed auditor,
         bytes32 netlistHash,
+        bytes32 processorIdentityHash,
         RiskTier riskTier,
         uint32 version
     );
@@ -99,6 +102,7 @@ contract CompositionRegistry {
     error InsufficientFee(uint256 sent, uint256 required);
     error NotCircuitHolder(address caller, address actualOwner);
     error ZeroAddress();
+    error AdapterIdentityUnavailable(address processor);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -140,10 +144,12 @@ contract CompositionRegistry {
             processor,
             tokenId
         );
+        bytes32 currentIdentityHash = _processorIdentityHash(processor);
         uint32 newVersion = ++_versionCounter[processor][tokenId];
 
         _publisherAttestations[processor][tokenId] = Attestation({
             circuitNetlistHash: currentNetlistHash,
+            processorIdentityHash: currentIdentityHash,
             declaredDepsCount: declaredDepsCount,
             depsListHash: depsListHash,
             riskTier: riskTier,
@@ -164,6 +170,7 @@ contract CompositionRegistry {
             tokenId,
             msg.sender,
             currentNetlistHash,
+            currentIdentityHash,
             declaredDepsCount,
             riskTier,
             newVersion
@@ -187,10 +194,12 @@ contract CompositionRegistry {
             processor,
             tokenId
         );
+        bytes32 currentIdentityHash = _processorIdentityHash(processor);
         uint32 newVersion = ++_versionCounter[processor][tokenId];
 
         _auditorAttestations[processor][tokenId] = Attestation({
             circuitNetlistHash: currentNetlistHash,
+            processorIdentityHash: currentIdentityHash,
             declaredDepsCount: 0,
             depsListHash: bytes32(0),
             riskTier: riskTier,
@@ -206,19 +215,20 @@ contract CompositionRegistry {
             tokenId,
             msg.sender,
             currentNetlistHash,
+            currentIdentityHash,
             riskTier,
             newVersion
         );
     }
 
     /// @notice Read a circuit's publisher attestation. Always free. `stale`
-    /// is true if the netlist has changed since attestation, or if none exists.
+    /// is true if the netlist, current holder, or processor trust identity changed.
     function getPublisherAttestation(
         address processor,
         uint256 tokenId
     ) public view returns (Attestation memory a, bool stale) {
         a = _publisherAttestations[processor][tokenId];
-        return _withStaleness(processor, tokenId, a);
+        return _withStaleness(processor, tokenId, a, true);
     }
 
     /// @notice Read a circuit's auditor attestation, same staleness semantics.
@@ -227,13 +237,14 @@ contract CompositionRegistry {
         uint256 tokenId
     ) public view returns (Attestation memory a, bool stale) {
         a = _auditorAttestations[processor][tokenId];
-        return _withStaleness(processor, tokenId, a);
+        return _withStaleness(processor, tokenId, a, false);
     }
 
     function _withStaleness(
         address processor,
         uint256 tokenId,
-        Attestation memory a
+        Attestation memory a,
+        bool requireCurrentHolder
     ) private view returns (Attestation memory, bool stale) {
         if (!a.exists) {
             return (a, true);
@@ -242,8 +253,21 @@ contract CompositionRegistry {
             processor,
             tokenId
         );
-        stale = currentHash != a.circuitNetlistHash;
+        stale = currentHash != a.circuitNetlistHash || _processorIdentityHash(processor) != a.processorIdentityHash;
+        if (requireCurrentHolder) {
+            address currentHolder = adapterRegistry.adapterFor(processor).ownerOf(processor, tokenId);
+            stale = stale || currentHolder != a.attestor;
+        }
         return (a, stale);
+    }
+
+        function _processorIdentityHash(address processor) private view returns (bytes32 identityHash) {
+        address adapter = address(adapterRegistry.adapterFor(processor));
+        (bool ok, bytes memory result) = adapter.staticcall(
+            abi.encodeWithSignature("trustIdentity(address)", processor)
+        );
+        if (!ok || result.length != 32) revert AdapterIdentityUnavailable(processor);
+        identityHash = abi.decode(result, (bytes32));
     }
 
     function hasPublisherAttestation(
