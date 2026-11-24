@@ -57,6 +57,7 @@ async function resolveClosure(provider, iface, processor, tokenId, opts = {}) {
       key, processor: cpu, id: BigInt(id), nIn, nOut,
       nState: Number(info.nState),
       localGateCount: decoded.gateCount,
+      localStateCount: decoded.records.filter((r) => r.op === 0x01).length,
       reportedExpandedGateCount: Number(info.gateCount),
       localDepth: decoded.depth,
       hasRef: decoded.hasRef,
@@ -77,7 +78,7 @@ async function resolveClosure(provider, iface, processor, tokenId, opts = {}) {
     active.add(item.key);
 
     let expandedGateCount = item.localGateCount;
-    let expandedStateCount = item.nState;
+    let expandedStateCount = item.localStateCount;
     let maxChildDepth = 0;
 
     for (const ref of item.refs) {
