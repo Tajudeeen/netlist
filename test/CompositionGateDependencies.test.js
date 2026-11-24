@@ -72,7 +72,7 @@ describe("CompositionGate — dependency-aware policy", function () {
       2,
       1,
       0,
-      hasRef ? 1 : 1,
+      1,
       netlist,
       await holder.getAddress()
     )).wait();
@@ -147,7 +147,7 @@ describe("CompositionGate — dependency-aware policy", function () {
     await attest(2, [3]);
     await attest(1, [2]);
 
-    await setCircuit(3, "0x00" + "000000" + "000002");
+    await setCircuit(3, "0x00" + "000000" + "000000");
 
     const [allowed, reason] = await check();
     expect(allowed).to.equal(false);
