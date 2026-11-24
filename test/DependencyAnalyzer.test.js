@@ -73,6 +73,29 @@ describe("DependencyAnalyzer — REF dependency discovery", function () {
     expect(r.complete).to.equal(true);
   });
 
+  it("deduplicates shared diamond dependencies but counts every REF instance", async function () {
+    const p = await processor.getAddress();
+    await setCircuit(4, "0x00" + "000000" + "000001");
+    await setCircuit(2, ref(p, 4));
+    await setCircuit(3, ref(p, 4));
+    await setCircuit(1, ref(p, 2) + ref(p, 3));
+
+    const r = await analyzer.analyze(p, 1, 8, 32);
+    expect(Number(r.totalCircuits)).to.equal(4);
+    expect(Number(r.depCount)).to.equal(3);
+    expect(Number(r.expandedInstances)).to.equal(5);
+    expect(r.cycleDetected).to.equal(false);
+    expect(r.complete).to.equal(true);
+  });
+
+  it("rejects caller limits above the analyzer hard ceiling", async function () {
+    await expectRevert(
+      analyzer.analyze(await processor.getAddress(), 1, 33, 32),
+      "InvalidLimits",
+      analyzer
+    );
+  });
+
   it("detects a REF cycle instead of looping forever", async function () {
     const p = await processor.getAddress();
     await setCircuit(1, ref(p, 2));
