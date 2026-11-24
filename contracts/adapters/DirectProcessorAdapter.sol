@@ -17,6 +17,10 @@ import {ITapeOutProcessor} from "../interfaces/ITapeOutProcessor.sol";
 /// share this same assumed interface; it takes the processor address on
 /// every call rather than being deployed per-processor.
 contract DirectProcessorAdapter is IProcessorAdapter {
+    function trustIdentity(address processor) external view returns (bytes32) {
+        return processor.codehash;
+    }
+
     function gateCount(address processor, uint256 tokenId) external view returns (uint32) {
         return ITapeOutProcessor(processor).gateCount(tokenId);
     }
