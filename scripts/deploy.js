@@ -91,7 +91,9 @@ async function main() {
   console.log("  gate.registry / gate.adapterRegistry: OK");
   console.log("  analyzer.adapterRegistry / netlistReader: OK");
 
-  console.log("\nRegistering the REAL TapeOut adapter for the sample processor:");
+  console.log("\nRegistering the REAL TapeOut adapter as the default for factory-recognized processors:");
+  await (await adapterRegistry.setDefaultAdapter(await v2Adapter.getAddress())).wait();
+  console.log("  setDefaultAdapter(TapeOutV2Adapter): OK");
   const SAMPLE_PROCESSOR = "0x839bdD6fa7A66416A609A735e11DE5411B98574e";
   const isCpuIface = new ethers.Interface(["function isCPU(address) view returns (bool)"]);
   const isCpu = await provider.call({
