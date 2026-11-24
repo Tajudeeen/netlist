@@ -88,6 +88,21 @@ describe("DependencyAnalyzer — REF dependency discovery", function () {
     expect(r.complete).to.equal(true);
   });
 
+  it("counts descendants again when a shared circuit is expanded through repeated REF edges", async function () {
+    const p = await processor.getAddress();
+    // A references B twice. B references C once. C is one unique identity,
+    // but it is evaluated once for each B instance.
+    await setCircuit(3, "0x00" + "000000" + "000001");
+    await setCircuit(2, ref(p, 3));
+    await setCircuit(1, ref(p, 2) + ref(p, 2).slice(2));
+
+    const r = await analyzer.analyze(p, 1, 8, 32);
+    expect(Number(r.totalCircuits)).to.equal(3);
+    expect(Number(r.depCount)).to.equal(2);
+    expect(Number(r.expandedInstances)).to.equal(5);
+    expect(r.complete).to.equal(true);
+  });
+
   it("hashes unique direct dependencies in canonical order", async function () {
     const p = await processor.getAddress();
     await setCircuit(4, "0x00" + "000000" + "000001");
