@@ -34,6 +34,7 @@ contract CompositionRegistry {
 
     struct Attestation {
         bytes32 circuitNetlistHash; // netlist hash at the time of attestation
+        bytes32 processorIdentityHash; // processor implementation/trust identity at attestation
         uint32 declaredDepsCount;
         bytes32 depsListHash; // keccak256 of the full declared dependency list
         RiskTier riskTier;
@@ -99,6 +100,7 @@ contract CompositionRegistry {
     error InsufficientFee(uint256 sent, uint256 required);
     error NotCircuitHolder(address caller, address actualOwner);
     error ZeroAddress();
+    error AdapterIdentityUnavailable(address processor);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -140,10 +142,12 @@ contract CompositionRegistry {
             processor,
             tokenId
         );
+        bytes32 currentIdentityHash = _processorIdentityHash(processor);
         uint32 newVersion = ++_versionCounter[processor][tokenId];
 
         _publisherAttestations[processor][tokenId] = Attestation({
             circuitNetlistHash: currentNetlistHash,
+            processorIdentityHash: currentIdentityHash,
             declaredDepsCount: declaredDepsCount,
             depsListHash: depsListHash,
             riskTier: riskTier,
@@ -187,10 +191,12 @@ contract CompositionRegistry {
             processor,
             tokenId
         );
+        bytes32 currentIdentityHash = _processorIdentityHash(processor);
         uint32 newVersion = ++_versionCounter[processor][tokenId];
 
         _auditorAttestations[processor][tokenId] = Attestation({
             circuitNetlistHash: currentNetlistHash,
+            processorIdentityHash: currentIdentityHash,
             declaredDepsCount: 0,
             depsListHash: bytes32(0),
             riskTier: riskTier,
@@ -243,12 +249,21 @@ contract CompositionRegistry {
             processor,
             tokenId
         );
-        stale = currentHash != a.circuitNetlistHash;
+        stale = currentHash != a.circuitNetlistHash || _processorIdentityHash(processor) != a.processorIdentityHash;
         if (requireCurrentHolder) {
             address currentHolder = adapterRegistry.adapterFor(processor).ownerOf(processor, tokenId);
             stale = stale || currentHolder != a.attestor;
         }
         return (a, stale);
+    }
+
+        function _processorIdentityHash(address processor) private view returns (bytes32 identityHash) {
+        address adapter = address(adapterRegistry.adapterFor(processor));
+        (bool ok, bytes memory result) = adapter.staticcall(
+            abi.encodeWithSignature("trustIdentity(address)", processor)
+        );
+        if (!ok || result.length != 32) revert AdapterIdentityUnavailable(processor);
+        identityHash = abi.decode(result, (bytes32));
     }
 
     function hasPublisherAttestation(
