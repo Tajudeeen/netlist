@@ -1,4 +1,5 @@
 const { expect } = require("chai");
+const { ethers } = require("ethers");
 const { parseRefs, resolveClosure } = require("../scripts/ref-closure");
 const { loadArtifacts, setupProvider, deploy } = require("./helpers");
 
