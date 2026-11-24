@@ -6,7 +6,7 @@ const {
 const fixture = require("./fixtures/xlayer-circuits.json");
 
 // Build a literal TAP-02 REF record: 0x02 | cpu(20) | id(u64) | nIns | nOuts | ins…
-function ref(cpu, id, nIns = 0, nOuts = 1, ins = []) {
+function ref(cpu, id, nIns = 2, nOuts = 1, ins = [0, 1]) {
   let hex = "0x02" + cpu.slice(2).toLowerCase() +
     BigInt(id).toString(16).padStart(16, "0") +
     nIns.toString(16).padStart(2, "0") + nOuts.toString(16).padStart(2, "0");
@@ -37,9 +37,9 @@ describe("DependencyAnalyzer — REF dependency discovery", function () {
     ]);
   });
 
-  async function setCircuit(id, netlist) {
+  async function setCircuit(id, netlist, nIn = 2, nOut = 1) {
     await (await processor.setCircuit(
-      id, 2, 1, 0, 1, netlist, await holder.getAddress()
+      id, nIn, nOut, 0, 1, netlist, await holder.getAddress()
     )).wait();
   }
 
@@ -48,7 +48,7 @@ describe("DependencyAnalyzer — REF dependency discovery", function () {
     const c = fixture.circuits.find((x) => x.processor.toLowerCase() ===
       "0x0565ea48ca41ae559d8d491dbb0a9ec945db551b" && x.tokenId === 1);
     expect(c, "REF circuit in fixture").to.exist;
-    await setCircuit(1, c.netlist);
+    await setCircuit(1, c.netlist, c.nIn, c.nOut);
     const r = await analyzer.analyze(await processor.getAddress(), 1, 8, 32);
     expect(Number(r.directRefs)).to.equal(1);
     expect(Number(r.totalCircuits)).to.equal(2); // root + the discovered target
@@ -85,6 +85,21 @@ describe("DependencyAnalyzer — REF dependency discovery", function () {
     expect(Number(r.depCount)).to.equal(3);
     expect(Number(r.expandedInstances)).to.equal(5);
     expect(r.cycleDetected).to.equal(false);
+    expect(r.complete).to.equal(true);
+  });
+
+  it("counts descendants again when a shared circuit is expanded through repeated REF edges", async function () {
+    const p = await processor.getAddress();
+    // A references B twice. B references C once. C is one unique identity,
+    // but it is evaluated once for each B instance.
+    await setCircuit(3, "0x00" + "000000" + "000001");
+    await setCircuit(2, ref(p, 3));
+    await setCircuit(1, ref(p, 2) + ref(p, 2).slice(2));
+
+    const r = await analyzer.analyze(p, 1, 8, 32);
+    expect(Number(r.totalCircuits)).to.equal(3);
+    expect(Number(r.depCount)).to.equal(2);
+    expect(Number(r.expandedInstances)).to.equal(5);
     expect(r.complete).to.equal(true);
   });
 

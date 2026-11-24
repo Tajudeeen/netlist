@@ -15,8 +15,7 @@ interface INetlistReader {
 /// @title DependencyAnalyzer
 /// @notice Resolves the actual REF graph. Unique circuit identities are
 /// deduplicated for policy/attestation checks, while expandedInstances counts
-/// every REF occurrence. A shared child in a diamond is one unique circuit
-/// but may represent multiple evaluation instances.
+/// every occurrence in the recursively expanded evaluation tree.
 contract DependencyAnalyzer {
     using TapRefs for bytes;
     using TapNetlist for bytes;
@@ -32,17 +31,34 @@ contract DependencyAnalyzer {
 
     struct DependencyReport {
         uint32 directRefs;
-        uint32 directDepsCount; // unique direct REF targets
-        bytes32 directDepsHash; // keccak256(abi.encode(sorted processors, sorted circuitIds))
-        uint32 totalCircuits; // unique identities, including root
-        uint32 expandedInstances; // root plus every REF occurrence
+        uint32 directDepsCount;
+        bytes32 directDepsHash;
+        uint32 totalCircuits;
+        uint32 expandedInstances;
         uint32 maxDepth;
         bool cycleDetected;
         bool missingTarget;
         bool truncated;
         bool complete;
-        CircuitRef[] dependencies; // unique non-root circuits
+        CircuitRef[] dependencies;
         uint32 depCount;
+    }
+
+    struct Traversal {
+        uint32 maxDepth;
+        uint32 maxCircuits;
+        uint32 visitedCount;
+        bytes32[] stack;
+        bytes32[] visited;
+        uint32[] subtreeInstances;
+        uint32[] subtreeDepths;
+        bool[] analyzed;
+    }
+
+    struct PinExpectation {
+        uint32 nIn;
+        uint32 nOut;
+        bool enabled;
     }
 
     ProcessorAdapterRegistry public immutable adapterRegistry;
@@ -70,11 +86,16 @@ contract DependencyAnalyzer {
         ) revert InvalidLimits(maxDepth, maxCircuits);
 
         report.dependencies = new CircuitRef[](maxCircuits);
-        report.expandedInstances = 1; // root circuit instance
-        bytes32[] memory stack = new bytes32[](uint256(maxDepth) + 1);
-        bytes32[] memory visited = new bytes32[](maxCircuits);
-        uint32[] memory visitedCount = new uint32[](1);
-        _walk(processor, tokenId, 0, maxDepth, maxCircuits, stack, visited, visitedCount, report);
+        Traversal memory traversal;
+        traversal.maxDepth = maxDepth;
+        traversal.maxCircuits = maxCircuits;
+        traversal.stack = new bytes32[](uint256(maxDepth) + 1);
+        traversal.visited = new bytes32[](maxCircuits);
+        traversal.subtreeInstances = new uint32[](maxCircuits);
+        traversal.subtreeDepths = new uint32[](maxCircuits);
+        traversal.analyzed = new bool[](maxCircuits);
+
+        _walk(processor, tokenId, 0, PinExpectation(0, 0, false), traversal, report);
         report.complete = !report.cycleDetected && !report.missingTarget && !report.truncated;
     }
 
@@ -100,7 +121,6 @@ contract DependencyAnalyzer {
             }
         }
 
-        // Canonical ascending order: processor address, then circuit id.
         for (uint256 i = 1; i < count; i++) {
             address cpu = processors[i];
             uint256 id = circuitIds[i];
@@ -129,138 +149,168 @@ contract DependencyAnalyzer {
         digest = keccak256(abi.encode(sortedProcessors, sortedIds));
     }
 
+    /// @dev Strictly validates the current netlist and, when supplied, the
+    /// pin arity declared by the parent REF record.
+    function _loadTargets(
+        address processor,
+        uint256 tokenId,
+        PinExpectation memory expected
+    ) private view returns (TapRefs.Target[] memory refs, bool readable) {
+        try netlistReader.circuitExists(processor, tokenId) returns (bool exists) {
+            if (!exists) return (refs, false);
+        } catch {
+            return (refs, false);
+        }
+
+        bytes memory nl;
+        try netlistReader.netlist(processor, tokenId) returns (bytes memory found) {
+            nl = found;
+        } catch {
+            return (refs, false);
+        }
+
+        uint32 nIn;
+        uint32 nOut;
+        try netlistReader.circuitInfo(processor, tokenId) returns (
+            uint32 declaredInputs, uint32 declaredOutputs, uint32, uint32
+        ) {
+            nIn = declaredInputs;
+            nOut = declaredOutputs;
+        } catch {
+            return (refs, false);
+        }
+
+        if (expected.enabled && (nIn != expected.nIn || nOut != expected.nOut)) {
+            return (refs, false);
+        }
+        nl.analyze(nIn, nOut);
+        refs = nl.targets();
+        return (refs, true);
+    }
+
     function _walk(
         address processor,
         uint256 tokenId,
         uint32 depth,
-        uint32 maxDepth,
-        uint32 maxCircuits,
-        bytes32[] memory stack,
-        bytes32[] memory visited,
-        uint32[] memory visitedCount,
+        PinExpectation memory expected,
+        Traversal memory traversal,
         DependencyReport memory report
     ) private view {
         bytes32 key = keccak256(abi.encodePacked(processor, tokenId));
 
-        // Check the active recursion path first. A repeated node on the
-        // current path is a cycle; a node visited on another branch is a
-        // shared dependency and must not be traversed or counted twice.
+        // Detect an active-path cycle before consulting the completed-node cache.
         for (uint256 i = 0; i < depth; i++) {
-            if (stack[i] == key) {
+            if (traversal.stack[i] == key) {
                 report.cycleDetected = true;
                 return;
             }
         }
-        for (uint256 i = 0; i < visitedCount[0]; i++) {
-            if (visited[i] == key) return;
+
+        uint256 cacheIndex = type(uint256).max;
+        for (uint256 i = 0; i < traversal.visitedCount; i++) {
+            if (traversal.visited[i] == key) {
+                cacheIndex = i;
+                break;
+            }
         }
 
-        if (visitedCount[0] >= maxCircuits) {
+        // A previously completed subtree can be accounted for in constant
+        // graph work. Its execution multiplicity still counts every node.
+        if (cacheIndex != type(uint256).max && traversal.analyzed[cacheIndex]) {
+            uint32 instances = traversal.subtreeInstances[cacheIndex];
+            if (instances > MAX_EXPANDED_INSTANCES - report.expandedInstances) {
+                report.expandedInstances = MAX_EXPANDED_INSTANCES;
+                report.truncated = true;
+                return;
+            }
+            report.expandedInstances += instances;
+            uint32 deepest = depth + traversal.subtreeDepths[cacheIndex];
+            if (deepest > report.maxDepth) report.maxDepth = deepest;
+            if (deepest > traversal.maxDepth) {
+                report.truncated = true;
+            }
+            return;
+        }
+
+        if (report.expandedInstances >= MAX_EXPANDED_INSTANCES) {
             report.truncated = true;
             return;
         }
-        visited[visitedCount[0]] = key;
-        visitedCount[0]++;
-        report.totalCircuits = visitedCount[0];
-        if (depth > report.maxDepth) report.maxDepth = depth;
-        stack[depth] = key;
+        uint32 initialInstances = report.expandedInstances;
+        report.expandedInstances++;
 
-        if (depth > 0) {
-            report.dependencies[report.depCount] = CircuitRef(processor, tokenId);
-            report.depCount++;
+        if (cacheIndex == type(uint256).max) {
+            if (traversal.visitedCount >= traversal.maxCircuits) {
+                report.truncated = true;
+                return;
+            }
+            cacheIndex = traversal.visitedCount;
+            traversal.visited[cacheIndex] = key;
+            traversal.visitedCount++;
+            report.totalCircuits = traversal.visitedCount;
+            if (depth > 0) {
+                report.dependencies[report.depCount] = CircuitRef(processor, tokenId);
+                report.depCount++;
+            }
         }
+
+        if (depth > report.maxDepth) report.maxDepth = depth;
+        traversal.stack[depth] = key;
 
         if (depth == 0) {
             adapterRegistry.adapterFor(processor);
         } else {
-            (bool ok, ) = address(adapterRegistry).staticcall(
+            (bool configured, ) = address(adapterRegistry).staticcall(
                 abi.encodeWithSelector(ProcessorAdapterRegistry.adapterFor.selector, processor)
             );
-            if (!ok) {
+            if (!configured) {
                 report.missingTarget = true;
                 return;
             }
         }
 
-        bytes memory nl;
-        try netlistReader.circuitExists(processor, tokenId) returns (bool exists) {
-            if (!exists) {
-                report.missingTarget = true;
-                return;
-            }
-        } catch {
-            report.missingTarget = true;
-            return;
-        }
-        try netlistReader.netlist(processor, tokenId) returns (bytes memory found) {
-            nl = found;
-        } catch {
-            report.missingTarget = true;
-            return;
-        }
-
-        // The production reader is TapeOutV2Adapter, which exposes circuitInfo.
-        // Validate every readable netlist against its declared input/output arity.
-        (bool rootInfoOk, bytes memory rootInfoData) = address(netlistReader).staticcall(
-            abi.encodeWithSelector(INetlistReader.circuitInfo.selector, processor, tokenId)
-        );
-        if (rootInfoOk && rootInfoData.length >= 128) {
-            (uint32 nIn, uint32 nOut, , ) = abi.decode(rootInfoData, (uint32, uint32, uint32, uint32));
-            nl.analyze(nIn, nOut);
-        }
-
-        TapRefs.Target[] memory refs = nl.targets();
+        (TapRefs.Target[] memory refs, bool readable) = _loadTargets(processor, tokenId, expected);
         if (depth == 0) {
             report.directRefs = uint32(refs.length);
             (report.directDepsCount, report.directDepsHash) = _directDependencyHash(refs);
         }
-
-        // When the configured reader exposes circuitInfo, REF targets must
-        // exist and match the exact arity encoded into the parent record.
-        if (rootInfoOk && rootInfoData.length >= 128) {
-            for (uint256 i = 0; i < refs.length; i++) {
-                (bool targetInfoOk, bytes memory targetInfoData) = address(netlistReader).staticcall(
-                    abi.encodeWithSelector(
-                        INetlistReader.circuitInfo.selector,
-                        refs[i].processor,
-                        refs[i].id
-                    )
-                );
-                if (!targetInfoOk || targetInfoData.length < 128) {
-                    report.missingTarget = true;
-                    return;
-                }
-                (uint32 targetNIn, uint32 targetNOut, , ) =
-                    abi.decode(targetInfoData, (uint32, uint32, uint32, uint32));
-                if (targetNIn != refs[i].nIns || targetNOut != refs[i].nOuts) {
-                    report.missingTarget = true;
-                    return;
-                }
-            }
+        if (!readable) {
+            report.missingTarget = true;
+            return;
         }
-        if (depth >= maxDepth && refs.length > 0) {
+
+        if (depth >= traversal.maxDepth && refs.length > 0) {
             report.truncated = true;
             return;
         }
 
+        uint32 localSubtreeDepth;
         for (uint256 i = 0; i < refs.length; i++) {
-            if (report.expandedInstances >= MAX_EXPANDED_INSTANCES) {
-                report.truncated = true;
-                return;
-            }
-            report.expandedInstances++;
             _walk(
                 refs[i].processor,
                 refs[i].id,
                 depth + 1,
-                maxDepth,
-                maxCircuits,
-                stack,
-                visited,
-                visitedCount,
+                PinExpectation(refs[i].nIns, refs[i].nOuts, true),
+                traversal,
                 report
             );
             if (report.truncated || report.cycleDetected || report.missingTarget) return;
+
+            bytes32 childKey = keccak256(abi.encodePacked(refs[i].processor, refs[i].id));
+            for (uint256 j = 0; j < traversal.visitedCount; j++) {
+                if (traversal.visited[j] == childKey && traversal.analyzed[j]) {
+                    uint32 childDepth = 1 + traversal.subtreeDepths[j];
+                    if (childDepth > localSubtreeDepth) localSubtreeDepth = childDepth;
+                    break;
+                }
+            }
         }
+
+        if (depth + localSubtreeDepth > report.maxDepth) {
+            report.maxDepth = depth + localSubtreeDepth;
+        }
+        traversal.subtreeInstances[cacheIndex] = report.expandedInstances - initialInstances;
+        traversal.subtreeDepths[cacheIndex] = localSubtreeDepth;
+        traversal.analyzed[cacheIndex] = true;
     }
 }

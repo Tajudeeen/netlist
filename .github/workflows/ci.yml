@@ -17,7 +17,30 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
+      - name: Report dependency audit
+        run: |
+          npm audit --json > npm-audit.json || true
+          node - <<'NODE'
+          const audit = require('./npm-audit.json');
+          console.log('Vulnerability totals:', JSON.stringify(audit.metadata?.vulnerabilities ?? {}));
+          for (const [name, item] of Object.entries(audit.vulnerabilities ?? {})) {
+            console.log(JSON.stringify({
+              name,
+              severity: item.severity,
+              direct: item.isDirect,
+              range: item.range,
+              via: item.via.map(v => typeof v === 'string' ? v : {
+                name: v.name,
+                title: v.title,
+                url: v.url,
+                range: v.range,
+              }),
+              nodes: item.nodes,
+              fixAvailable: item.fixAvailable,
+            }));
+          }
+          NODE
       - run: npm test
