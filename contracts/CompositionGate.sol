@@ -166,6 +166,10 @@ contract CompositionGate {
             return (false, "gas-estimate");
         }
 
+        if (policy.maxDepsCount != 0 && !dependencyAware) {
+            return (false, "deps-unverified");
+        }
+
         if (!r.hasPublisherAttestation) {
             if (policy.rejectUnattested) {
                 return (false, "no-attestation");
@@ -173,9 +177,6 @@ contract CompositionGate {
         } else {
             if (r.publisherAttestationStale && policy.rejectStale) {
                 return (false, "stale");
-            }
-            if (policy.maxDepsCount != 0 && !dependencyAware) {
-                return (false, "deps-unverified");
             }
             if (uint8(r.publisherRiskTier) > uint8(policy.maxRiskTier)) {
                 return (false, "risk-tier");
@@ -269,8 +270,8 @@ contract CompositionGate {
         // must itself satisfy the policy. This is what makes a stale
         // downstream attestation propagate to the parent composition.
         for (uint256 i = 0; i < dep.depCount; i++) {
-            (bool depAllowed, string memory depReason) = checkCall(
-                dep.dependencies[i].processor, dep.dependencies[i].tokenId, policy
+            (bool depAllowed, string memory depReason) = _checkCall(
+                dep.dependencies[i].processor, dep.dependencies[i].tokenId, policy, true
             );
             if (!depAllowed) return (false, depReason);
         }
