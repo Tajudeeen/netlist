@@ -172,6 +172,13 @@ contract TapeOutV2Adapter is IProcessorAdapter {
 
     /// @notice Raw netlist bytes, exposed for dependency analysis. This is
     /// the exact data TapRefs parses — no self-reported dependency list.
+    function circuitInfo(
+        address processor,
+        uint256 tokenId
+    ) external view onlyTapeOutProcessor(processor) returns (uint32 nIn, uint32 nOut, uint32 nState, uint32 gateCount) {
+        return _processor(processor).circuitInfo(tokenId);
+    }
+
     function netlist(
         address processor,
         uint256 tokenId
