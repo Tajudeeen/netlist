@@ -179,7 +179,7 @@ describe("CompositionGate", function () {
       policy
     );
     expect(allowed).to.equal(false);
-    expect(reason).to.equal("gas-estimate");
+    expect(reason).to.equal("gas-unbounded");
   });
 
   it("denies when publisher risk tier exceeds the caller's tolerance", async function () {
