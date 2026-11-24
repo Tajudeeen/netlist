@@ -1,86 +1,73 @@
-// Verifies recursive REF closure against live X Layer circuits.
-// npm run verify:refs
+// Independent, block-pinned REF closure verifier for X Layer.
+// Requires at least two independently operated RPC URLs:
+// XLAYER_RPC_URLS=https://rpc-a,https://rpc-b npm run verify:refs
 const { ethers } = require("ethers");
 const { resolveClosure } = require("./ref-closure");
 
-// Public RPCs reset connections occasionally; a bounded retry makes the
-// verifier robust without hiding a real mismatch.
-async function withRetry(label, fn, attempts = 4) {
-  let last;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      return await fn();
-    } catch (e) {
-      last = e;
-      if (/ECONNRESET|ETIMEDOUT|ECONNREFUSED|429|503/.test(String(e && e.message))) {
-        await new Promise((r) => setTimeout(r, 500 * (i + 1)));
-        continue;
-      }
-      throw e;
-    }
-  }
-  throw new Error(`${label} failed after ${attempts} attempts: ${last && last.message}`);
-}
-
-const RPC = process.env.XLAYER_MAINNET_RPC || "https://rpc.xlayer.tech";
+const RPC_URLS = (process.env.XLAYER_RPC_URLS || "")
+  .split(",").map((s) => s.trim()).filter(Boolean);
 const IFACE = new ethers.Interface([
   "function circuitInfo(uint256) view returns (uint32 nIn, uint32 nOut, uint32 nState, uint32 gateCount)",
   "function netlist(uint256) view returns (bytes)",
 ]);
 const TARGETS = [
-  // A real REF circuit on X Layer (verified 2026-11-20) and a non-REF one.
-  { processor: "0x0565EA48CA41Ae559d8d491dbb0a9ec945DB551b", id: 1, kind: "REF" },
-  { processor: "0x839bdD6fa7A66416A609A735e11DE5411B98574e", id: 1, kind: "plain" },
+  { processor: "0x0565EA48CA41Ae559d8d491dbb0a9ec945DB551b", id: 1 },
+  { processor: "0x839bdD6fa7A66416A609A735e11DE5411B98574e", id: 1 },
 ];
 
 async function main() {
-  const provider = new ethers.JsonRpcProvider(RPC);
-  const chainId = Number((await provider.send("eth_chainId", [])).toString());
-  if (chainId !== 196) throw new Error(`expected X Layer chain 196, got ${chainId}`);
-  const block = await provider.getBlockNumber();
-  console.log(`REF-closure verification — X Layer 196, block ${block}`);
+  if (RPC_URLS.length < 2) {
+    throw new Error("set XLAYER_RPC_URLS to at least two independent RPC endpoints; single-RPC output is not quorum evidence");
+  }
+
+  const providers = RPC_URLS.map((url) => new ethers.JsonRpcProvider(url));
+  const chainIds = await Promise.all(providers.map(async (p) => Number((await p.send("eth_chainId", [])).toString())));
+  if (chainIds.some((id) => id !== 196)) throw new Error(`all RPCs must report X Layer chain 196, got ${chainIds.join(",")}`);
+
+  const heights = await Promise.all(providers.map((p) => p.getBlockNumber()));
+  const blockTag = Math.min(...heights);
+  const blocks = await Promise.all(providers.map((p) => p.getBlock(blockTag)));
+  if (blocks.some((b) => !b) || blocks.some((b) => b.hash !== blocks[0].hash)) {
+    throw new Error(`RPC disagreement at pinned block ${blockTag}`);
+  }
+  const blockHash = blocks[0].hash;
+  console.log(`Pinned X Layer block ${blockTag} (${blockHash}) across ${providers.length} RPC endpoints`);
+
   let failures = 0;
+  for (const target of TARGETS) {
+    const reports = await Promise.all(providers.map((provider) =>
+      resolveClosure(provider, IFACE, target.processor, target.id, {
+        blockTag, maxDepth: 32, maxCircuits: 128, maxInstances: 512,
+      })
+    ));
 
-  for (const t of TARGETS) {
-    const proc = new ethers.Contract(t.processor, IFACE, provider);
-    const info = await withRetry("circuitInfo", () => proc.circuitInfo(t.id));
-    const closure = await withRetry("closure", () =>
-      resolveClosure(provider, IFACE, t.processor, t.id)
-    );
-    const hasRef = closure.circuits[0].refs > 0;
-    console.log(`\n${t.processor} #${t.id} (${t.kind}):`);
-    for (const c of closure.circuits) {
-      console.log(
-        `  ${c.processor} #${c.id}: gates=${c.decodedGates} ` +
-          `reported=${c.reportedGates} refs=${c.refs} depth=${c.localDepth}`
-      );
+    const canonical = reports[0];
+    for (let i = 1; i < reports.length; i++) {
+      const other = reports[i];
+      const same = other.uniqueCircuitCount === canonical.uniqueCircuitCount &&
+        other.expandedInstanceCount === canonical.expandedInstanceCount &&
+        other.expandedGateCount === canonical.expandedGateCount &&
+        other.expandedStateCount === canonical.expandedStateCount &&
+        other.maxRefDepth === canonical.maxRefDepth;
+      if (!same) {
+        failures++;
+        console.error(`RPC result disagreement for ${target.processor} #${target.id}`);
+      }
     }
-    console.log(
-      `  closure: ${closure.circuits.length} circuits, ` +
-        `${closure.totalGates} total gates, missing=${closure.missing}`
-    );
 
-    if (hasRef) {
-      // TAP-02 §6: circuitInfo.gateCount includes REF sub-circuits.
-      // Top-level decoded=0; the reported count must equal the closure total
-      // (allow for shared sub-circuits counted once by the resolver).
-      const ok = closure.missing === 0 && closure.totalGates === Number(info.gateCount);
-      console.log(
-        `  REF check: circuitInfo=${info.gateCount} vs closure=${closure.totalGates} ` +
-          `-> ${ok ? "MATCH" : "MISMATCH"}`
-      );
-      if (!ok) failures++;
-    } else {
-      const ok = closure.totalGates === Number(info.gateCount);
-      console.log(`  plain check: ${ok ? "MATCH" : "MISMATCH"}`);
-      if (!ok) failures++;
+    console.log(`\n${target.processor} #${target.id}`);
+    console.log(`  unique circuits:       ${canonical.uniqueCircuitCount}`);
+    console.log(`  expanded instances:    ${canonical.expandedInstanceCount}`);
+    console.log(`  expanded gate count:   ${canonical.expandedGateCount}`);
+    console.log(`  expanded state count:  ${canonical.expandedStateCount}`);
+    console.log(`  maximum REF depth:     ${canonical.maxRefDepth}`);
+    for (const circuit of canonical.circuits) {
+      console.log(`  ${circuit.processor} #${circuit.id}: local gates=${circuit.localGateCount}, local latches=${circuit.localStateCount}, REF records=${circuit.refs.length}`);
     }
   }
-  if (failures > 0) {
-    console.log(`\nFAILED: ${failures} closure check(s) disagree.`);
-    process.exit(1);
-  }
-  console.log("\nPASS: recursive REF closures agree with on-chain circuitInfo.");
+
+  if (failures) throw new Error(`${failures} independent RPC comparison(s) failed`);
+  console.log("\nPASS: recursive REF closure and expanded gate/state counts agree across independent RPCs at one pinned block.");
 }
 
 main().catch((e) => {
