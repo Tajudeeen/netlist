@@ -83,8 +83,8 @@ contract TapeOutV2Adapter is IProcessorAdapter {
 
     function _analyze(address processor, uint256 tokenId) private view returns (TapNetlist.Analysis memory) {
         ITapeOutProcessorV2 p = _processor(processor);
-        (uint32 nIn, , , ) = p.circuitInfo(tokenId);
-        return p.netlist(tokenId).analyze(nIn);
+        (uint32 nIn, uint32 nOut, , ) = p.circuitInfo(tokenId);
+        return p.netlist(tokenId).analyze(nIn, nOut);
     }
 
     /// @notice Top-level NAND+LATCH count decoded from the real netlist bytes.
@@ -201,8 +201,8 @@ contract TapeOutV2Adapter is IProcessorAdapter {
     {
         ITapeOutProcessorV2 p = _processor(processor);
         bytes memory nl = p.netlist(tokenId);
-        (uint32 nIn, , , uint32 reported) = p.circuitInfo(tokenId);
-        analysis = nl.analyze(nIn);
+        (uint32 nIn, uint32 nOut, , uint32 reported) = p.circuitInfo(tokenId);
+        analysis = nl.analyze(nIn, nOut);
         if (!analysis.hasRef && analysis.gateCount != reported) {
             revert GateCountMismatch(analysis.gateCount, reported);
         }
