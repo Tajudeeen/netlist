@@ -100,6 +100,10 @@ contract TapeOutV2Adapter is IProcessorAdapter {
     }
 
     /// @notice Top-level NAND+LATCH count decoded from the real netlist bytes.
+    function gateCountIsComplete(address processor, uint256 tokenId) external view override onlyTapeOutProcessor(processor) returns (bool) {
+        return !_analyze(processor, tokenId).hasRef;
+    }
+
     function gateCount(
         address processor,
         uint256 tokenId
