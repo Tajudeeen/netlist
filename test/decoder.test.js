@@ -43,7 +43,7 @@ describe("TAP-02 structural decoder", function () {
   it("uses previous-beat LATCH output depth zero and measures the D path", function () {
     // NAND signal 2 is available to the LATCH D input. LATCH output itself
     // remains depth zero.
-    const nl = "0x0000000000000100000002";
+    const nl = "0x0000000000000101000002";
     const a = decodeTapNetlist(nl, 0, 1);
     expect(a.depth).to.equal(1);
   });
