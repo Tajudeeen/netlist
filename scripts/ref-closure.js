@@ -1,94 +1,128 @@
-// Recursive REF-closure resolver for TAP-02 netlists.
-//
-// TAP-02 §2: a REF record is `0x02 cpu(20) id(u64) nIns(u8) nOuts(u8) ins(u24×nIns)`
-// = 31 + 3*nIns bytes. TAP-02 §3: a REF target must already exist, so the
-// closure is acyclic. circuitInfo(id).gateCount counts gates through REF.
-//
-// This module walks that closure, reading netlist/circuitInfo via eth_call,
-// and returns a total gate count + max depth that can be compared against
-// the processor's own circuitInfo().gateCount. It is used by
-// scripts/verify-ref.js as an independent, on-chain-verifiable cross-check.
-//
-// NOTE: this is an OFF-CHAIN resolver (a verifier/integration tool). Doing
-// this inside a Solidity adapter would require an unbounded number of
-// external calls and is deliberately not claimed on-chain. See README.
-const { decodeTapNetlist } = require("../test/decoder");
+// Recursive TAP-02 REF-closure resolver.
+// Circuit identities are deduplicated for unique-circuit reporting and
+// attestation checks. REF occurrences are NOT deduplicated when calculating
+// expanded evaluation work: referencing the same child twice evaluates two
+// instances and contributes its gate/state count twice.
 
-function parseRefs(hex) {
-  const b = Buffer.from(hex.replace(/^0x/, ""), "hex");
-  const refs = [];
-  let pos = 0;
-  let signals = 2; // caller passes nIn separately; only used for validation
-  while (pos < b.length) {
-    const op = b[pos++];
-    if (op === 0x00) {
-      pos += 6;
-    } else if (op === 0x01) {
-      pos += 3;
-    } else if (op === 0x02) {
-      const cpu = "0x" + b.subarray(pos, pos + 20).toString("hex");
-      pos += 20;
-      const id = Number(b.readBigUInt64BE(pos));
-      pos += 8;
-      const nIns = b[pos++];
-      const nOuts = b[pos++];
-      pos += nIns * 3;
-      refs.push({ cpu, id, nIns, nOuts });
-    } else {
-      throw new Error(`bad opcode 0x${op.toString(16)}`);
-    }
-  }
-  return refs;
+const { decodeTapNetlist } = require("../test/decoder");
+const { Contract } = require("ethers");
+
+const DEFAULT_MAX_CIRCUITS = 128;
+const DEFAULT_MAX_DEPTH = 32;
+const DEFAULT_MAX_INSTANCES = 512;
+
+function keyOf(processor, id) {
+  return processor.toLowerCase() + ":" + BigInt(id).toString();
 }
 
-/**
- * Walk the REF closure of circuit (processor, tokenId).
- * @param provider ethers.JsonRpcProvider
- * @param iface ethers.Interface with circuitInfo/netlist
- * @returns { totalGates, maxDepth, circuits: [{processor,id,gates,depth,refs}], missing }
- */
 async function resolveClosure(provider, iface, processor, tokenId, opts = {}) {
-  const maxCircuits = opts.maxCircuits || 64;
-  const seen = new Set();
-  const circuits = [];
-  let missing = 0;
+  const maxCircuits = opts.maxCircuits ?? DEFAULT_MAX_CIRCUITS;
+  const maxDepth = opts.maxDepth ?? DEFAULT_MAX_DEPTH;
+  const maxInstances = opts.maxInstances ?? DEFAULT_MAX_INSTANCES;
+  const blockTag = opts.blockTag;
 
-  async function visit(cpu, id) {
-    const key = cpu.toLowerCase() + ":" + id;
-    if (seen.has(key)) return; // DAG: already counted (TAP-02 §3 acyclic)
-    if (seen.size >= maxCircuits) throw new Error(`closure exceeded ${maxCircuits} circuits`);
-    seen.add(key);
+  if (!Number.isInteger(maxCircuits) || maxCircuits < 1 || maxCircuits > DEFAULT_MAX_CIRCUITS) {
+    throw new Error(`maxCircuits must be between 1 and ${DEFAULT_MAX_CIRCUITS}`);
+  }
+  if (!Number.isInteger(maxDepth) || maxDepth < 0 || maxDepth > DEFAULT_MAX_DEPTH) {
+    throw new Error(`maxDepth must be between 0 and ${DEFAULT_MAX_DEPTH}`);
+  }
+  if (!Number.isInteger(maxInstances) || maxInstances < 1 || maxInstances > DEFAULT_MAX_INSTANCES) {
+    throw new Error(`maxInstances must be between 1 and ${DEFAULT_MAX_INSTANCES}`);
+  }
 
-    const proc = new (require("ethers").Contract)(cpu, iface, provider);
-    const info = await proc.circuitInfo(id);
-    const nl = await proc.netlist(id);
+  const unique = new Map();
+  const active = new Set();
+  let expandedInstanceCount = 0;
+
+  async function load(cpu, id) {
+    const key = keyOf(cpu, id);
+    if (unique.has(key)) return unique.get(key);
+    if (unique.size >= maxCircuits) throw new Error(`closure exceeded ${maxCircuits} unique circuits`);
+
+    const proc = new Contract(cpu, iface, provider);
+    const overrides = blockTag === undefined ? [] : [{ blockTag }];
+    const [info, nl] = await Promise.all([
+      proc.circuitInfo(id, ...overrides),
+      proc.netlist(id, ...overrides),
+    ]);
     const nIn = Number(info.nIn);
-    const decoded = decodeTapNetlist(nl, nIn, Number(info.nOut));
-    const refs = parseRefs(nl);
-    circuits.push({
-      processor: cpu,
-      id,
-      nIn,
-      nOut: Number(info.nOut),
+    const nOut = Number(info.nOut);
+    const decoded = decodeTapNetlist(nl, nIn, nOut);
+    const refs = decoded.records
+      .filter((r) => r.op === 0x02)
+      .map((r) => ({ cpu: r.cpu, id: r.id, nIns: r.inputs.length, nOuts: r.nOut }));
+
+    const item = {
+      key, processor: cpu, id: BigInt(id), nIn, nOut,
       nState: Number(info.nState),
-      decodedGates: decoded.gateCount,
-      reportedGates: Number(info.gateCount),
+      localGateCount: decoded.gateCount,
+      reportedExpandedGateCount: Number(info.gateCount),
       localDepth: decoded.depth,
-      refs: refs.length,
-    });
-    for (const r of refs) {
-      try {
-        await visit(r.cpu, r.id);
-      } catch (e) {
-        missing++;
+      hasRef: decoded.hasRef,
+      refs,
+    };
+    unique.set(key, item);
+    return item;
+  }
+
+  async function expand(cpu, id, depth) {
+    if (depth > maxDepth) throw new Error(`REF depth exceeded ${maxDepth}`);
+    if (++expandedInstanceCount > maxInstances) {
+      throw new Error(`expanded REF instances exceeded ${maxInstances}`);
+    }
+
+    const item = await load(cpu, id);
+    if (active.has(item.key)) throw new Error(`REF cycle detected at ${item.key}`);
+    active.add(item.key);
+
+    let expandedGateCount = item.localGateCount;
+    let expandedStateCount = item.nState;
+    let maxChildDepth = 0;
+
+    for (const ref of item.refs) {
+      const child = await load(ref.cpu, ref.id);
+      if (child.nIn !== ref.nIns || child.nOut !== ref.nOuts) {
+        throw new Error(
+          `REF arity mismatch: ${item.key} -> ${child.key}, ` +
+          `REF declares ${ref.nIns}/${ref.nOuts}, target has ${child.nIn}/${child.nOut}`
+        );
+      }
+      const result = await expand(ref.cpu, ref.id, depth + 1);
+      expandedGateCount += result.expandedGateCount;
+      expandedStateCount += result.expandedStateCount;
+      maxChildDepth = Math.max(maxChildDepth, result.maxRefDepth + 1);
+      if (expandedGateCount > 0xffffffff || expandedStateCount > (1 << 24)) {
+        throw new Error("TAP-02 expanded circuit size overflow");
       }
     }
+
+    active.delete(item.key);
+    return {
+      expandedGateCount,
+      expandedStateCount,
+      maxRefDepth: maxChildDepth,
+    };
   }
 
-  await visit(processor, tokenId);
-  const totalGates = circuits.reduce((s, c) => s + c.decodedGates, 0);
-  const maxDepth = circuits.reduce((m, c) => Math.max(m, c.localDepth), 0);
-  return { totalGates, maxDepth, circuits, missing };
+  const root = await expand(processor, tokenId, 0);
+  const rootItem = unique.get(keyOf(processor, tokenId));
+  if (root.expandedGateCount !== rootItem.reportedExpandedGateCount) {
+    throw new Error(
+      `TAP-02 gateCount mismatch: recursively expanded=${root.expandedGateCount}, ` +
+      `processor reports=${rootItem.reportedExpandedGateCount}`
+    );
+  }
+
+  return {
+    uniqueCircuitCount: unique.size,
+    expandedInstanceCount,
+    expandedGateCount: root.expandedGateCount,
+    expandedStateCount: root.expandedStateCount,
+    maxRefDepth: root.maxRefDepth,
+    circuits: [...unique.values()],
+    blockTag,
+  };
 }
 
-module.exports = { parseRefs, resolveClosure };
+module.exports = { resolveClosure };
