@@ -139,10 +139,10 @@ contract CompositionGate {
     /// @notice Apply a policy against a circuit's status report.
     /// @return allowed Whether the target passes.
     /// @return reason Machine-readable reason when denied, empty when allowed.
-    /// One of: "no-attestation", "stale", "gas-estimate", "deps-count",
-    /// "risk-tier", "unsealed", "container-dead", "no-audit", "audit-stale".
-    /// checkCallWithDependencies() adds "dep-cycle", "dep-missing",
-    /// "dep-unbounded" for incomplete REF closures.
+    /// Reasons include: "no-attestation", "stale", "gas-estimate",
+    /// "deps-count", "deps-unverified", "dep-declaration-mismatch",
+    /// "risk-tier", "unsealed", "container-dead", "no-audit", "audit-stale",
+    /// "dep-cycle", "dep-missing" and "dep-unbounded".
     function checkCall(
         address processor,
         uint256 tokenId,
