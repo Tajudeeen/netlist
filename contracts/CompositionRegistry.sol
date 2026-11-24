@@ -77,6 +77,7 @@ contract CompositionRegistry {
         uint256 indexed tokenId,
         address indexed attestor,
         bytes32 netlistHash,
+        bytes32 processorIdentityHash,
         uint32 declaredDepsCount,
         RiskTier riskTier,
         uint32 version
@@ -87,6 +88,7 @@ contract CompositionRegistry {
         uint256 indexed tokenId,
         address indexed auditor,
         bytes32 netlistHash,
+        bytes32 processorIdentityHash,
         RiskTier riskTier,
         uint32 version
     );
@@ -168,6 +170,7 @@ contract CompositionRegistry {
             tokenId,
             msg.sender,
             currentNetlistHash,
+            currentIdentityHash,
             declaredDepsCount,
             riskTier,
             newVersion
@@ -212,13 +215,14 @@ contract CompositionRegistry {
             tokenId,
             msg.sender,
             currentNetlistHash,
+            currentIdentityHash,
             riskTier,
             newVersion
         );
     }
 
     /// @notice Read a circuit's publisher attestation. Always free. `stale`
-    /// is true if the netlist has changed since attestation, or if none exists.
+    /// is true if the netlist, current holder, or processor trust identity changed.
     function getPublisherAttestation(
         address processor,
         uint256 tokenId
