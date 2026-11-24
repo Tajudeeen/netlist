@@ -148,6 +148,15 @@ contract CompositionGate {
         uint256 tokenId,
         GatePolicy calldata policy
     ) public view returns (bool allowed, string memory reason) {
+        return _checkCall(processor, tokenId, policy, false);
+    }
+
+    function _checkCall(
+        address processor,
+        uint256 tokenId,
+        GatePolicy calldata policy,
+        bool dependencyAware
+    ) private view returns (bool allowed, string memory reason) {
         StatusReport memory r = statusReport(processor, tokenId);
 
         if (
@@ -165,11 +174,8 @@ contract CompositionGate {
             if (r.publisherAttestationStale && policy.rejectStale) {
                 return (false, "stale");
             }
-            if (
-                policy.maxDepsCount != 0 &&
-                r.declaredDepsCount > policy.maxDepsCount
-            ) {
-                return (false, "deps-count");
+            if (policy.maxDepsCount != 0 && !dependencyAware) {
+                return (false, "deps-unverified");
             }
             if (uint8(r.publisherRiskTier) > uint8(policy.maxRiskTier)) {
                 return (false, "risk-tier");
@@ -245,7 +251,7 @@ contract CompositionGate {
         uint32 maxDepth,
         uint32 maxCircuits
     ) external view returns (bool allowed, string memory reason) {
-        (allowed, reason) = checkCall(processor, tokenId, policy);
+        (allowed, reason) = _checkCall(processor, tokenId, policy, true);
         if (!allowed) return (allowed, reason);
 
         DependencyAnalyzer.DependencyReport memory dep =
@@ -255,6 +261,9 @@ contract CompositionGate {
         if (dep.cycleDetected) return (false, "dep-cycle");
         if (dep.missingTarget) return (false, "dep-missing");
         if (dep.truncated) return (false, "dep-unbounded");
+        if (policy.maxDepsCount != 0 && dep.depCount > policy.maxDepsCount) {
+            return (false, "deps-count");
+        }
 
         // Structural completeness is not enough: each reached dependency
         // must itself satisfy the policy. This is what makes a stale
