@@ -97,7 +97,7 @@ library TapNetlist {
                 if (di >= signals) revert MalformedNetlist("LATCH d out of range");
                 pos += 3;
             } else {
-                RefInfo memory r = _readRef(b, len, pos, 0); // REF inputs were validated in pass 1
+                RefInfo memory r = _readRef(b, len, pos, signals); // REF inputs were validated in pass 1
                 pos = r.nextPos;
             }
         }
@@ -141,7 +141,7 @@ library TapNetlist {
                 if (d > a.depth) a.depth = d;
                 pos += 3;
             } else {
-                RefInfo memory r = _readRef(b, len, pos, 0);
+                RefInfo memory r = _readRef(b, len, pos, signals);
                 pos = r.nextPos;
             }
         }
