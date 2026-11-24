@@ -44,6 +44,14 @@ contract DependencyAnalyzer {
         uint32 depCount;
     }
 
+    struct Traversal {
+        uint32 maxDepth;
+        uint32 maxCircuits;
+        uint32 visitedCount;
+        bytes32[] stack;
+        bytes32[] visited;
+    }
+
     ProcessorAdapterRegistry public immutable adapterRegistry;
     INetlistReader public immutable netlistReader;
 
@@ -69,10 +77,13 @@ contract DependencyAnalyzer {
         ) revert InvalidLimits(maxDepth, maxCircuits);
 
         report.dependencies = new CircuitRef[](maxCircuits);
-        bytes32[] memory stack = new bytes32[](uint256(maxDepth) + 1);
-        bytes32[] memory visited = new bytes32[](maxCircuits);
-        uint32[] memory visitedCount = new uint32[](1);
-        _walk(processor, tokenId, 0, maxDepth, maxCircuits, stack, visited, visitedCount, report);
+        Traversal memory traversal;
+        traversal.maxDepth = maxDepth;
+        traversal.maxCircuits = maxCircuits;
+        traversal.stack = new bytes32[](uint256(maxDepth) + 1);
+        traversal.visited = new bytes32[](maxCircuits);
+
+        _walk(processor, tokenId, 0, traversal, report);
         report.complete = !report.cycleDetected && !report.missingTarget && !report.truncated;
     }
 
@@ -126,15 +137,57 @@ contract DependencyAnalyzer {
         digest = keccak256(abi.encode(sortedProcessors, sortedIds));
     }
 
+    /// @dev Strictly validates the current netlist and every direct REF target.
+    /// Readers that cannot provide circuitInfo are rejected as incomplete.
+    function _loadTargets(address processor, uint256 tokenId)
+        private view returns (TapRefs.Target[] memory refs, bool readable)
+    {
+        try netlistReader.circuitExists(processor, tokenId) returns (bool exists) {
+            if (!exists) return (refs, false);
+        } catch {
+            return (refs, false);
+        }
+
+        bytes memory nl;
+        try netlistReader.netlist(processor, tokenId) returns (bytes memory found) {
+            nl = found;
+        } catch {
+            return (refs, false);
+        }
+
+        uint32 nIn;
+        uint32 nOut;
+        try netlistReader.circuitInfo(processor, tokenId) returns (
+            uint32 declaredInputs, uint32 declaredOutputs, uint32, uint32
+        ) {
+            nIn = declaredInputs;
+            nOut = declaredOutputs;
+        } catch {
+            return (refs, false);
+        }
+
+        nl.analyze(nIn, nOut);
+        refs = nl.targets();
+
+        for (uint256 i = 0; i < refs.length; i++) {
+            try netlistReader.circuitInfo(refs[i].processor, refs[i].id) returns (
+                uint32 targetNIn, uint32 targetNOut, uint32, uint32
+            ) {
+                if (targetNIn != refs[i].nIns || targetNOut != refs[i].nOuts) {
+                    return (refs, false);
+                }
+            } catch {
+                return (refs, false);
+            }
+        }
+        return (refs, true);
+    }
+
     function _walk(
         address processor,
         uint256 tokenId,
         uint32 depth,
-        uint32 maxDepth,
-        uint32 maxCircuits,
-        bytes32[] memory stack,
-        bytes32[] memory visited,
-        uint32[] memory visitedCount,
+        Traversal memory traversal,
         DependencyReport memory report
     ) private view {
         // Every invocation is one expanded evaluation instance, including a
@@ -147,34 +200,28 @@ contract DependencyAnalyzer {
         report.expandedInstances++;
 
         bytes32 key = keccak256(abi.encodePacked(processor, tokenId));
-
-        // Active-path repetition is a cycle. A node seen on another branch is
-        // still expanded again because its descendants also execute again.
         for (uint256 i = 0; i < depth; i++) {
-            if (stack[i] == key) {
+            if (traversal.stack[i] == key) {
                 report.cycleDetected = true;
                 return;
             }
         }
 
-        bool isNew;
-        for (uint256 i = 0; i < visitedCount[0]; i++) {
-            if (visited[i] == key) {
-                isNew = false;
+        bool seen;
+        for (uint256 i = 0; i < traversal.visitedCount; i++) {
+            if (traversal.visited[i] == key) {
+                seen = true;
                 break;
             }
-            isNew = true;
         }
-        if (visitedCount[0] == 0) isNew = true;
-
-        if (isNew) {
-            if (visitedCount[0] >= maxCircuits) {
+        if (!seen) {
+            if (traversal.visitedCount >= traversal.maxCircuits) {
                 report.truncated = true;
                 return;
             }
-            visited[visitedCount[0]] = key;
-            visitedCount[0]++;
-            report.totalCircuits = visitedCount[0];
+            traversal.visited[traversal.visitedCount] = key;
+            traversal.visitedCount++;
+            report.totalCircuits = traversal.visitedCount;
             if (depth > 0) {
                 report.dependencies[report.depCount] = CircuitRef(processor, tokenId);
                 report.depCount++;
@@ -182,87 +229,38 @@ contract DependencyAnalyzer {
         }
 
         if (depth > report.maxDepth) report.maxDepth = depth;
-        stack[depth] = key;
+        traversal.stack[depth] = key;
 
         if (depth == 0) {
             adapterRegistry.adapterFor(processor);
         } else {
-            (bool ok, ) = address(adapterRegistry).staticcall(
+            (bool configured, ) = address(adapterRegistry).staticcall(
                 abi.encodeWithSelector(ProcessorAdapterRegistry.adapterFor.selector, processor)
             );
-            if (!ok) {
+            if (!configured) {
                 report.missingTarget = true;
                 return;
             }
         }
 
-        bytes memory nl;
-        try netlistReader.circuitExists(processor, tokenId) returns (bool exists) {
-            if (!exists) {
-                report.missingTarget = true;
-                return;
-            }
-        } catch {
-            report.missingTarget = true;
-            return;
-        }
-        try netlistReader.netlist(processor, tokenId) returns (bytes memory found) {
-            nl = found;
-        } catch {
+        (TapRefs.Target[] memory refs, bool readable) = _loadTargets(processor, tokenId);
+        if (!readable) {
             report.missingTarget = true;
             return;
         }
 
-        uint32 rootNIn;
-        uint32 rootNOut;
-        try netlistReader.circuitInfo(processor, tokenId) returns (
-            uint32 nIn, uint32 nOut, uint32, uint32
-        ) {
-            rootNIn = nIn;
-            rootNOut = nOut;
-        } catch {
-            report.missingTarget = true;
-            return;
-        }
-        nl.analyze(rootNIn, rootNOut);
-
-        TapRefs.Target[] memory refs = nl.targets();
         if (depth == 0) {
             report.directRefs = uint32(refs.length);
             (report.directDepsCount, report.directDepsHash) = _directDependencyHash(refs);
         }
 
-        for (uint256 i = 0; i < refs.length; i++) {
-            try netlistReader.circuitInfo(refs[i].processor, refs[i].id) returns (
-                uint32 targetNIn, uint32 targetNOut, uint32, uint32
-            ) {
-                if (targetNIn != refs[i].nIns || targetNOut != refs[i].nOuts) {
-                    report.missingTarget = true;
-                    return;
-                }
-            } catch {
-                report.missingTarget = true;
-                return;
-            }
-        }
-
-        if (depth >= maxDepth && refs.length > 0) {
+        if (depth >= traversal.maxDepth && refs.length > 0) {
             report.truncated = true;
             return;
         }
 
         for (uint256 i = 0; i < refs.length; i++) {
-            _walk(
-                refs[i].processor,
-                refs[i].id,
-                depth + 1,
-                maxDepth,
-                maxCircuits,
-                stack,
-                visited,
-                visitedCount,
-                report
-            );
+            _walk(refs[i].processor, refs[i].id, depth + 1, traversal, report);
             if (report.truncated || report.cycleDetected || report.missingTarget) return;
         }
     }
