@@ -126,4 +126,41 @@ async function resolveClosure(provider, iface, processor, tokenId, opts = {}) {
   };
 }
 
-module.exports = { resolveClosure };
+function parseRefs(hex) {
+  if (typeof hex !== "string" || !/^0x(?:[0-9a-fA-F]{2})*$/.test(hex)) {
+    throw new Error("netlist must be even-length 0x-prefixed hex");
+  }
+  const b = Buffer.from(hex.slice(2), "hex");
+  const refs = [];
+  let pos = 0;
+  while (pos < b.length) {
+    const op = b[pos++];
+    if (op === 0x00) {
+      if (b.length - pos < 6) throw new Error(`truncated record at byte ${pos - 1}`);
+      pos += 6;
+    } else if (op === 0x01) {
+      if (b.length - pos < 3) throw new Error(`truncated record at byte ${pos - 1}`);
+      pos += 3;
+    } else if (op === 0x02) {
+      if (b.length - pos < 30) throw new Error(`truncated record at byte ${pos - 1}`);
+      const cpu = "0x" + b.subarray(pos, pos + 20).toString("hex");
+      const idBig = b.readBigUInt64BE(pos + 20);
+      const nIns = b[pos + 28];
+      const nOuts = b[pos + 29];
+      pos += 30;
+      if (b.length - pos < nIns * 3) throw new Error(`truncated record at byte ${pos - 1}`);
+      pos += nIns * 3;
+      refs.push({
+        cpu,
+        id: idBig <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(idBig) : idBig,
+        nIns,
+        nOuts,
+      });
+    } else {
+      throw new Error(`bad opcode 0x${op.toString(16)}`);
+    }
+  }
+  return refs;
+}
+
+module.exports = { resolveClosure, parseRefs };
