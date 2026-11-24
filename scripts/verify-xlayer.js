@@ -83,7 +83,7 @@ async function main() {
       try {
         const info = await proc.circuitInfo(id);
         const nl = await proc.netlist(id);
-        const decoded = decodeTapNetlist(nl, Number(info.nIn));
+        const decoded = decodeTapNetlist(nl, Number(info.nIn), Number(info.nOut));
         const ok = decoded.hasRef || decoded.gateCount === Number(info.gateCount);
         if (decoded.hasRef) refCircuits++;
         if (!ok) mismatches++;
