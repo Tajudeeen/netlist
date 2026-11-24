@@ -6,7 +6,7 @@ const {
 const fixture = require("./fixtures/xlayer-circuits.json");
 
 // Build a literal TAP-02 REF record: 0x02 | cpu(20) | id(u64) | nIns | nOuts | ins…
-function ref(cpu, id, nIns = 0, nOuts = 1, ins = []) {
+function ref(cpu, id, nIns = 2, nOuts = 1, ins = [0, 1]) {
   let hex = "0x02" + cpu.slice(2).toLowerCase() +
     BigInt(id).toString(16).padStart(16, "0") +
     nIns.toString(16).padStart(2, "0") + nOuts.toString(16).padStart(2, "0");
