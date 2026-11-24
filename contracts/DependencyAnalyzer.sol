@@ -15,8 +15,7 @@ interface INetlistReader {
 /// @title DependencyAnalyzer
 /// @notice Resolves the actual REF graph. Unique circuit identities are
 /// deduplicated for policy/attestation checks, while expandedInstances counts
-/// every REF occurrence. A shared child in a diamond is one unique circuit
-/// but may represent multiple evaluation instances.
+/// every occurrence in the recursively expanded evaluation tree.
 contract DependencyAnalyzer {
     using TapRefs for bytes;
     using TapNetlist for bytes;
@@ -32,16 +31,16 @@ contract DependencyAnalyzer {
 
     struct DependencyReport {
         uint32 directRefs;
-        uint32 directDepsCount; // unique direct REF targets
-        bytes32 directDepsHash; // keccak256(abi.encode(sorted processors, sorted circuitIds))
-        uint32 totalCircuits; // unique identities, including root
-        uint32 expandedInstances; // root plus every REF occurrence
+        uint32 directDepsCount;
+        bytes32 directDepsHash;
+        uint32 totalCircuits;
+        uint32 expandedInstances;
         uint32 maxDepth;
         bool cycleDetected;
         bool missingTarget;
         bool truncated;
         bool complete;
-        CircuitRef[] dependencies; // unique non-root circuits
+        CircuitRef[] dependencies;
         uint32 depCount;
     }
 
@@ -70,7 +69,6 @@ contract DependencyAnalyzer {
         ) revert InvalidLimits(maxDepth, maxCircuits);
 
         report.dependencies = new CircuitRef[](maxCircuits);
-        report.expandedInstances = 1; // root circuit instance
         bytes32[] memory stack = new bytes32[](uint256(maxDepth) + 1);
         bytes32[] memory visited = new bytes32[](maxCircuits);
         uint32[] memory visitedCount = new uint32[](1);
@@ -100,7 +98,6 @@ contract DependencyAnalyzer {
             }
         }
 
-        // Canonical ascending order: processor address, then circuit id.
         for (uint256 i = 1; i < count; i++) {
             address cpu = processors[i];
             uint256 id = circuitIds[i];
@@ -140,35 +137,52 @@ contract DependencyAnalyzer {
         uint32[] memory visitedCount,
         DependencyReport memory report
     ) private view {
+        // Every invocation is one expanded evaluation instance, including a
+        // repeated circuit reached through another REF edge. Bound work before
+        // doing any external reads or parsing.
+        if (report.expandedInstances >= MAX_EXPANDED_INSTANCES) {
+            report.truncated = true;
+            return;
+        }
+        report.expandedInstances++;
+
         bytes32 key = keccak256(abi.encodePacked(processor, tokenId));
 
-        // Check the active recursion path first. A repeated node on the
-        // current path is a cycle; a node visited on another branch is a
-        // shared dependency and must not be traversed or counted twice.
+        // Active-path repetition is a cycle. A node seen on another branch is
+        // still expanded again because its descendants also execute again.
         for (uint256 i = 0; i < depth; i++) {
             if (stack[i] == key) {
                 report.cycleDetected = true;
                 return;
             }
         }
+
+        bool isNew;
         for (uint256 i = 0; i < visitedCount[0]; i++) {
-            if (visited[i] == key) return;
+            if (visited[i] == key) {
+                isNew = false;
+                break;
+            }
+            isNew = true;
+        }
+        if (visitedCount[0] == 0) isNew = true;
+
+        if (isNew) {
+            if (visitedCount[0] >= maxCircuits) {
+                report.truncated = true;
+                return;
+            }
+            visited[visitedCount[0]] = key;
+            visitedCount[0]++;
+            report.totalCircuits = visitedCount[0];
+            if (depth > 0) {
+                report.dependencies[report.depCount] = CircuitRef(processor, tokenId);
+                report.depCount++;
+            }
         }
 
-        if (visitedCount[0] >= maxCircuits) {
-            report.truncated = true;
-            return;
-        }
-        visited[visitedCount[0]] = key;
-        visitedCount[0]++;
-        report.totalCircuits = visitedCount[0];
         if (depth > report.maxDepth) report.maxDepth = depth;
         stack[depth] = key;
-
-        if (depth > 0) {
-            report.dependencies[report.depCount] = CircuitRef(processor, tokenId);
-            report.depCount++;
-        }
 
         if (depth == 0) {
             adapterRegistry.adapterFor(processor);
@@ -199,8 +213,6 @@ contract DependencyAnalyzer {
             return;
         }
 
-        // The production reader is TapeOutV2Adapter, which exposes circuitInfo.
-        // Validate every readable netlist against its declared input/output arity.
         (bool rootInfoOk, bytes memory rootInfoData) = address(netlistReader).staticcall(
             abi.encodeWithSelector(INetlistReader.circuitInfo.selector, processor, tokenId)
         );
@@ -215,8 +227,6 @@ contract DependencyAnalyzer {
             (report.directDepsCount, report.directDepsHash) = _directDependencyHash(refs);
         }
 
-        // When the configured reader exposes circuitInfo, REF targets must
-        // exist and match the exact arity encoded into the parent record.
         if (rootInfoOk && rootInfoData.length >= 128) {
             for (uint256 i = 0; i < refs.length; i++) {
                 (bool targetInfoOk, bytes memory targetInfoData) = address(netlistReader).staticcall(
@@ -238,17 +248,13 @@ contract DependencyAnalyzer {
                 }
             }
         }
+
         if (depth >= maxDepth && refs.length > 0) {
             report.truncated = true;
             return;
         }
 
         for (uint256 i = 0; i < refs.length; i++) {
-            if (report.expandedInstances >= MAX_EXPANDED_INSTANCES) {
-                report.truncated = true;
-                return;
-            }
-            report.expandedInstances++;
             _walk(
                 refs[i].processor,
                 refs[i].id,
