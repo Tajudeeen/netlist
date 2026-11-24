@@ -19,6 +19,7 @@ interface INetlistReader {
 /// but may represent multiple evaluation instances.
 contract DependencyAnalyzer {
     using TapRefs for bytes;
+    using TapNetlist for bytes;
 
     uint32 public constant MAX_ANALYSIS_DEPTH = 32;
     uint32 public constant MAX_UNIQUE_CIRCUITS = 128;
