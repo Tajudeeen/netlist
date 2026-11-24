@@ -323,6 +323,13 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
     expect(allowed).to.equal(true);
     expect(reason).to.equal("");
 
+    const gasPolicy = [1000, 0, 3, true, true, true, true, false];
+    const [gasAllowed, gasReason] = await gate.checkCall(
+      await processor.getAddress(), 1, gasPolicy
+    );
+    expect(gasAllowed).to.equal(false);
+    expect(gasReason).to.equal("gas-estimate");
+
     const [attestation, staleBefore] = await registry.getPublisherAttestation(
       await processor.getAddress(), 1
     );
