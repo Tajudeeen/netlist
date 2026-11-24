@@ -141,13 +141,13 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
     );
   });
 
-  it("treats a forward LATCH as feedback, bounded depth of 1", async function () {
+  it("treats a forward LATCH as feedback with previous-beat output depth zero", async function () {
     await (
       await setCircuit(1, 0, 1, 1, 1, FEEDBACK_LATCH, await holder.getAddress())
     ).wait();
     const analysis = await adapter.analyzeCircuit(await processor.getAddress(), 1);
     expect(analysis.analysis.hasForwardLatch).to.equal(true);
-    expect(Number(analysis.analysis.depth)).to.equal(1);
+    expect(Number(analysis.analysis.depth)).to.equal(0);
     // independent JS oracle agrees
     expect(Number(analysis.analysis.depth)).to.equal(
       decodeTapNetlist(FEEDBACK_LATCH, 0, 1).depth
