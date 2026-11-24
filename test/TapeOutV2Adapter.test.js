@@ -303,5 +303,18 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
     );
     expect(allowed).to.equal(true);
     expect(reason).to.equal("");
+
+    const [attestation, staleBefore] = await registry.getPublisherAttestation(
+      await processor.getAddress(), 1
+    );
+    expect(attestation.exists).to.equal(true);
+    expect(staleBefore).to.equal(false);
+
+    // A beacon implementation change changes the processor trust identity.
+    await (await beacon.setImplementation(ethers.ZeroAddress)).wait();
+    const [, staleAfter] = await registry.getPublisherAttestation(
+      await processor.getAddress(), 1
+    );
+    expect(staleAfter).to.equal(true);
   });
 });
