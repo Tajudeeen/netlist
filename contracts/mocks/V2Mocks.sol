@@ -57,6 +57,12 @@ contract MockNetlistReader {
         (, uint32 nOut, , ) = MockProcessorV2(processor).circuitInfo(tokenId);
         return nOut != 0;
     }
+
+    function circuitInfo(address processor, uint256 tokenId)
+        external view returns (uint32 nIn, uint32 nOut, uint32 nState, uint32 gateCount)
+    {
+        return MockProcessorV2(processor).circuitInfo(tokenId);
+    }
 }
 
 /// @notice Minimal stand-ins for the TAP-10 companion contracts the adapter
