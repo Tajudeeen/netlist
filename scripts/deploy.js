@@ -75,9 +75,9 @@ async function main() {
   const gate = await deployContract("CompositionGate", [
     await registry.getAddress(), await adapterRegistry.getAddress(), GAS_PER_GATE,
   ]);
-  const reader = await deployContract("MockNetlistReader", [], "NetlistReader");
+  // TapeOutV2Adapter is the live netlist reader. Never wire the test-only mock.
   const analyzer = await deployContract("DependencyAnalyzer", [
-    await adapterRegistry.getAddress(), await reader.getAddress(),
+    await adapterRegistry.getAddress(), await v2Adapter.getAddress(),
   ]);
 
   console.log("\nVerifying deployment wiring:");
