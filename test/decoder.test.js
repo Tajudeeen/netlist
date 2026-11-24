@@ -1,5 +1,6 @@
 const { expect } = require("chai");
 const { decodeTapNetlist } = require("./decoder");
+const tap02 = require("./fixtures/tap02-vectors.json");
 
 const ref = (cpu, id, nIns, nOuts, ins = []) =>
   "0x02" + cpu.slice(2).padStart(40, "0") +
@@ -55,6 +56,24 @@ describe("TAP-02 structural decoder", function () {
     expect(a.refCount).to.equal(1);
     expect(a.records[0].id).to.equal(7n);
     expect(a.depth).to.equal(0);
+  });
+
+  it("accepts every official TAP-02 valid vector structurally", function () {
+    for (const vector of tap02.valid) {
+      const decoded = decodeTapNetlist(vector.netlist, vector.nIn, vector.nOut);
+      expect(decoded.signals, vector.name).to.be.greaterThan(2 + vector.nIn);
+    }
+  });
+
+  it("rejects every official TAP-02 structural invalid vector", function () {
+    const resolverOnly = new Set(["ref_arity_mismatch", "ref_target_not_registered"]);
+    for (const vector of tap02.illFormed) {
+      if (resolverOnly.has(vector.name)) continue;
+      expect(
+        () => decodeTapNetlist(vector.netlist, vector.nIn, vector.nOut),
+        vector.name
+      ).to.throw();
+    }
   });
 
   it("rejects malformed hex", function () {
