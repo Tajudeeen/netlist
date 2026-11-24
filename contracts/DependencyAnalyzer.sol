@@ -284,6 +284,7 @@ contract DependencyAnalyzer {
             return;
         }
 
+        uint32 localSubtreeDepth;
         for (uint256 i = 0; i < refs.length; i++) {
             _walk(
                 refs[i].processor,
@@ -294,10 +295,22 @@ contract DependencyAnalyzer {
                 report
             );
             if (report.truncated || report.cycleDetected || report.missingTarget) return;
+
+            bytes32 childKey = keccak256(abi.encodePacked(refs[i].processor, refs[i].id));
+            for (uint256 j = 0; j < traversal.visitedCount; j++) {
+                if (traversal.visited[j] == childKey && traversal.analyzed[j]) {
+                    uint32 childDepth = 1 + traversal.subtreeDepths[j];
+                    if (childDepth > localSubtreeDepth) localSubtreeDepth = childDepth;
+                    break;
+                }
+            }
         }
 
+        if (depth + localSubtreeDepth > report.maxDepth) {
+            report.maxDepth = depth + localSubtreeDepth;
+        }
         traversal.subtreeInstances[cacheIndex] = report.expandedInstances - initialInstances;
-        traversal.subtreeDepths[cacheIndex] = report.maxDepth - depth;
+        traversal.subtreeDepths[cacheIndex] = localSubtreeDepth;
         traversal.analyzed[cacheIndex] = true;
     }
 }
