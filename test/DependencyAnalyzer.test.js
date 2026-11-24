@@ -88,6 +88,42 @@ describe("DependencyAnalyzer — REF dependency discovery", function () {
     expect(r.complete).to.equal(true);
   });
 
+  it("hashes unique direct dependencies in canonical order", async function () {
+    const p = await processor.getAddress();
+    await setCircuit(4, "0x00" + "000000" + "000001");
+    await setCircuit(2, ref(p, 4));
+    await setCircuit(3, ref(p, 4));
+    await setCircuit(1, ref(p, 2) + ref(p, 3).slice(2));
+
+    const r = await analyzer.analyze(p, 1, 8, 32);
+    expect(Number(r.directRefs)).to.equal(2);
+    expect(Number(r.directDepsCount)).to.equal(2);
+    const expected = ethers.keccak256(
+      ethers.AbiCoder.defaultAbiCoder().encode(
+        ["address[]", "uint256[]"],
+        [[p, p], [2, 3]]
+      )
+    );
+    expect(r.directDepsHash).to.equal(expected);
+  });
+
+  it("deduplicates repeated direct REF targets in the declaration hash", async function () {
+    const p = await processor.getAddress();
+    await setCircuit(2, "0x00" + "000000" + "000001");
+    await setCircuit(1, ref(p, 2) + ref(p, 2).slice(2));
+
+    const r = await analyzer.analyze(p, 1, 8, 32);
+    expect(Number(r.directRefs)).to.equal(2);
+    expect(Number(r.directDepsCount)).to.equal(1);
+    const expected = ethers.keccak256(
+      ethers.AbiCoder.defaultAbiCoder().encode(
+        ["address[]", "uint256[]"],
+        [[p], [2]]
+      )
+    );
+    expect(r.directDepsHash).to.equal(expected);
+  });
+
   it("rejects caller limits above the analyzer hard ceiling", async function () {
     await expectRevert(
       analyzer.analyze(await processor.getAddress(), 1, 33, 32),
