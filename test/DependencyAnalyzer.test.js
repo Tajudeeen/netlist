@@ -78,7 +78,7 @@ describe("DependencyAnalyzer — REF dependency discovery", function () {
     await setCircuit(4, "0x00" + "000000" + "000001");
     await setCircuit(2, ref(p, 4));
     await setCircuit(3, ref(p, 4));
-    await setCircuit(1, ref(p, 2) + ref(p, 3));
+    await setCircuit(1, ref(p, 2) + ref(p, 3).slice(2));
 
     const r = await analyzer.analyze(p, 1, 8, 32);
     expect(Number(r.totalCircuits)).to.equal(4);
