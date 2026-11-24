@@ -231,11 +231,11 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
         await holder.getAddress())
     ).wait();
     await (await factory.setCPU(p, true)).wait();
+    await (await factory.setSealed(true)).wait();
+    await (await beacon.setOwner(await factory.getAddress())).wait();
     await (
       await registry.connect(holder).attestAsPublisher(p, 1, 0, ethers.ZeroHash, 1, "")
     ).wait();
-    await (await factory.setSealed(true)).wait();
-    await (await beacon.setOwner(await factory.getAddress())).wait();
     const container = await adapter.containerOf(p, 1);
     await (await payments.setLive(container, true)).wait();
 
@@ -298,6 +298,8 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
     await (
       await factory.setCPU(await processor.getAddress(), true)
     ).wait();
+    await (await factory.setSealed(true)).wait();
+    await (await beacon.setOwner(await factory.getAddress())).wait();
     await (
       await registry
         .connect(holder)
@@ -310,8 +312,6 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
           ""
         )
     ).wait();
-    await (await factory.setSealed(true)).wait();
-    await (await beacon.setOwner(await factory.getAddress())).wait();
     const container = await adapter.containerOf(await processor.getAddress(), 1);
     await (await payments.setLive(container, true)).wait();
     const policy = Array.from(await gate.defaultPolicy());
