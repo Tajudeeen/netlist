@@ -83,7 +83,7 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
         )
       ).wait();
 
-      const expected = decodeTapNetlist(c.netlist, c.nIn);
+      const expected = decodeTapNetlist(c.netlist, c.nIn, c.nOut);
       const analysis = await adapter.analyzeCircuit(
         await processor.getAddress(),
         c.tokenId
@@ -150,7 +150,7 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
     expect(Number(analysis.analysis.depth)).to.equal(1);
     // independent JS oracle agrees
     expect(Number(analysis.analysis.depth)).to.equal(
-      decodeTapNetlist(FEEDBACK_LATCH, 0).depth
+      decodeTapNetlist(FEEDBACK_LATCH, 0, 1).depth
     );
   });
 
