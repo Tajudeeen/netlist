@@ -64,6 +64,7 @@ contract DependencyAnalyzer {
         ) revert InvalidLimits(maxDepth, maxCircuits);
 
         report.dependencies = new CircuitRef[](maxCircuits);
+        report.expandedInstances = 1; // root circuit instance
         bytes32[] memory stack = new bytes32[](uint256(maxDepth) + 1);
         bytes32[] memory visited = new bytes32[](maxCircuits);
         uint32[] memory visitedCount = new uint32[](1);
