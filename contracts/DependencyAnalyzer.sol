@@ -213,13 +213,18 @@ contract DependencyAnalyzer {
             return;
         }
 
-        (bool rootInfoOk, bytes memory rootInfoData) = address(netlistReader).staticcall(
-            abi.encodeWithSelector(INetlistReader.circuitInfo.selector, processor, tokenId)
-        );
-        if (rootInfoOk && rootInfoData.length >= 128) {
-            (uint32 nIn, uint32 nOut, , ) = abi.decode(rootInfoData, (uint32, uint32, uint32, uint32));
-            nl.analyze(nIn, nOut);
+        uint32 rootNIn;
+        uint32 rootNOut;
+        try netlistReader.circuitInfo(processor, tokenId) returns (
+            uint32 nIn, uint32 nOut, uint32, uint32
+        ) {
+            rootNIn = nIn;
+            rootNOut = nOut;
+        } catch {
+            report.missingTarget = true;
+            return;
         }
+        nl.analyze(rootNIn, rootNOut);
 
         TapRefs.Target[] memory refs = nl.targets();
         if (depth == 0) {
@@ -227,25 +232,17 @@ contract DependencyAnalyzer {
             (report.directDepsCount, report.directDepsHash) = _directDependencyHash(refs);
         }
 
-        if (rootInfoOk && rootInfoData.length >= 128) {
-            for (uint256 i = 0; i < refs.length; i++) {
-                (bool targetInfoOk, bytes memory targetInfoData) = address(netlistReader).staticcall(
-                    abi.encodeWithSelector(
-                        INetlistReader.circuitInfo.selector,
-                        refs[i].processor,
-                        refs[i].id
-                    )
-                );
-                if (!targetInfoOk || targetInfoData.length < 128) {
-                    report.missingTarget = true;
-                    return;
-                }
-                (uint32 targetNIn, uint32 targetNOut, , ) =
-                    abi.decode(targetInfoData, (uint32, uint32, uint32, uint32));
+        for (uint256 i = 0; i < refs.length; i++) {
+            try netlistReader.circuitInfo(refs[i].processor, refs[i].id) returns (
+                uint32 targetNIn, uint32 targetNOut, uint32, uint32
+            ) {
                 if (targetNIn != refs[i].nIns || targetNOut != refs[i].nOuts) {
                     report.missingTarget = true;
                     return;
                 }
+            } catch {
+                report.missingTarget = true;
+                return;
             }
         }
 
