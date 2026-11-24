@@ -37,9 +37,9 @@ describe("DependencyAnalyzer — REF dependency discovery", function () {
     ]);
   });
 
-  async function setCircuit(id, netlist) {
+  async function setCircuit(id, netlist, nIn = 2, nOut = 1) {
     await (await processor.setCircuit(
-      id, 2, 1, 0, 1, netlist, await holder.getAddress()
+      id, nIn, nOut, 0, 1, netlist, await holder.getAddress()
     )).wait();
   }
 
@@ -48,7 +48,7 @@ describe("DependencyAnalyzer — REF dependency discovery", function () {
     const c = fixture.circuits.find((x) => x.processor.toLowerCase() ===
       "0x0565ea48ca41ae559d8d491dbb0a9ec945db551b" && x.tokenId === 1);
     expect(c, "REF circuit in fixture").to.exist;
-    await setCircuit(1, c.netlist);
+    await setCircuit(1, c.netlist, c.nIn, c.nOut);
     const r = await analyzer.analyze(await processor.getAddress(), 1, 8, 32);
     expect(Number(r.directRefs)).to.equal(1);
     expect(Number(r.totalCircuits)).to.equal(2); // root + the discovered target
