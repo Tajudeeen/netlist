@@ -143,11 +143,13 @@ contract DependencyAnalyzer {
         digest = keccak256(abi.encode(sortedProcessors, sortedIds));
     }
 
-    /// @dev Strictly validates the current netlist and every direct REF target.
-    /// Readers that cannot provide circuitInfo are rejected as incomplete.
-    function _loadTargets(address processor, uint256 tokenId)
-        private view returns (TapRefs.Target[] memory refs, bool readable)
-    {
+    /// @dev Strictly validates the current netlist and, when supplied, the
+    /// pin arity declared by the parent REF record.
+    function _loadTargets(
+        address processor,
+        uint256 tokenId,
+        PinExpectation memory expected
+    ) private view returns (TapRefs.Target[] memory refs, bool readable) {
         try netlistReader.circuitExists(processor, tokenId) returns (bool exists) {
             if (!exists) return (refs, false);
         } catch {
