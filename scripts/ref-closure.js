@@ -63,7 +63,7 @@ async function resolveClosure(provider, iface, processor, tokenId, opts = {}) {
     const info = await proc.circuitInfo(id);
     const nl = await proc.netlist(id);
     const nIn = Number(info.nIn);
-    const decoded = decodeTapNetlist(nl, nIn);
+    const decoded = decodeTapNetlist(nl, nIn, Number(info.nOut));
     const refs = parseRefs(nl);
     circuits.push({
       processor: cpu,
