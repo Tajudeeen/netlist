@@ -249,6 +249,25 @@ describe("TapeOutV2Adapter — real TAP-02 decoder, differentially tested", func
     expect(deep[1]).to.equal("dep-missing");
   });
 
+  it("validates REF target pin arity when the live adapter is the analyzer reader", async function () {
+    const adapterRegistry = await deploy(artifacts, "ProcessorAdapterRegistry", deployer);
+    const p = await processor.getAddress();
+    await (await adapterRegistry.setAdapter(p, await adapter.getAddress())).wait();
+    const analyzer = await deploy(artifacts, "DependencyAnalyzer", deployer, [
+      await adapterRegistry.getAddress(), await adapter.getAddress(),
+    ]);
+
+    // Parent declares a zero-input REF, while the target circuit has two inputs.
+    const badRef = "0x02" + p.slice(2).toLowerCase() +
+      "0000000000000002" + "00" + "01";
+    await (await setCircuit(1, 2, 1, 0, 1, badRef, await holder.getAddress())).wait();
+    await (await setCircuit(2, 2, 1, 0, 1, THREE_NAND, await holder.getAddress())).wait();
+
+    const report = await analyzer.analyze(p, 1, 8, 32);
+    expect(report.missingTarget).to.equal(true);
+    expect(report.complete).to.equal(false);
+  });
+
   it("works unchanged as an IProcessorAdapter for CompositionRegistry", async function () {
     // Register the real adapter for the processor and run a publisher
     // attestation + gate check through the untouched core contracts.
