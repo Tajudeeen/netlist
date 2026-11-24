@@ -28,6 +28,8 @@ contract DependencyAnalyzer {
 
     struct DependencyReport {
         uint32 directRefs;
+        uint32 directDepsCount; // unique direct REF targets
+        bytes32 directDepsHash; // keccak256(abi.encode(sorted processors, sorted circuitIds))
         uint32 totalCircuits; // unique identities, including root
         uint32 expandedInstances; // root plus every REF occurrence
         uint32 maxDepth;
@@ -70,6 +72,57 @@ contract DependencyAnalyzer {
         uint32[] memory visitedCount = new uint32[](1);
         _walk(processor, tokenId, 0, maxDepth, maxCircuits, stack, visited, visitedCount, report);
         report.complete = !report.cycleDetected && !report.missingTarget && !report.truncated;
+    }
+
+    function _directDependencyHash(TapRefs.Target[] memory refs)
+        private pure returns (uint32 count, bytes32 digest)
+    {
+        if (refs.length == 0) return (0, bytes32(0));
+
+        address[] memory processors = new address[](refs.length);
+        uint256[] memory circuitIds = new uint256[](refs.length);
+        for (uint256 i = 0; i < refs.length; i++) {
+            bool exists;
+            for (uint256 j = 0; j < count; j++) {
+                if (processors[j] == refs[i].processor && circuitIds[j] == refs[i].id) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                processors[count] = refs[i].processor;
+                circuitIds[count] = refs[i].id;
+                count++;
+            }
+        }
+
+        // Canonical ascending order: processor address, then circuit id.
+        for (uint256 i = 1; i < count; i++) {
+            address cpu = processors[i];
+            uint256 id = circuitIds[i];
+            uint256 j = i;
+            while (
+                j > 0 &&
+                (
+                    uint160(processors[j - 1]) > uint160(cpu) ||
+                    (processors[j - 1] == cpu && circuitIds[j - 1] > id)
+                )
+            ) {
+                processors[j] = processors[j - 1];
+                circuitIds[j] = circuitIds[j - 1];
+                j--;
+            }
+            processors[j] = cpu;
+            circuitIds[j] = id;
+        }
+
+        address[] memory sortedProcessors = new address[](count);
+        uint256[] memory sortedIds = new uint256[](count);
+        for (uint256 i = 0; i < count; i++) {
+            sortedProcessors[i] = processors[i];
+            sortedIds[i] = circuitIds[i];
+        }
+        digest = keccak256(abi.encode(sortedProcessors, sortedIds));
     }
 
     function _walk(
@@ -143,7 +196,10 @@ contract DependencyAnalyzer {
         }
 
         TapRefs.Target[] memory refs = nl.targets();
-        if (depth == 0) report.directRefs = uint32(refs.length);
+        if (depth == 0) {
+            report.directRefs = uint32(refs.length);
+            (report.directDepsCount, report.directDepsHash) = _directDependencyHash(refs);
+        }
         if (depth >= maxDepth && refs.length > 0) {
             report.truncated = true;
             return;
