@@ -52,6 +52,12 @@ contract DependencyAnalyzer {
         bytes32[] visited;
     }
 
+    struct PinExpectation {
+        uint32 nIn;
+        uint32 nOut;
+        bool enabled;
+    }
+
     ProcessorAdapterRegistry public immutable adapterRegistry;
     INetlistReader public immutable netlistReader;
 
@@ -83,7 +89,7 @@ contract DependencyAnalyzer {
         traversal.stack = new bytes32[](uint256(maxDepth) + 1);
         traversal.visited = new bytes32[](maxCircuits);
 
-        _walk(processor, tokenId, 0, traversal, report);
+        _walk(processor, tokenId, 0, PinExpectation(0, 0, false), traversal, report);
         report.complete = !report.cycleDetected && !report.missingTarget && !report.truncated;
     }
 
@@ -166,20 +172,11 @@ contract DependencyAnalyzer {
             return (refs, false);
         }
 
+        if (expected.enabled && (nIn != expected.nIn || nOut != expected.nOut)) {
+            return (refs, false);
+        }
         nl.analyze(nIn, nOut);
         refs = nl.targets();
-
-        for (uint256 i = 0; i < refs.length; i++) {
-            try netlistReader.circuitInfo(refs[i].processor, refs[i].id) returns (
-                uint32 targetNIn, uint32 targetNOut, uint32, uint32
-            ) {
-                if (targetNIn != refs[i].nIns || targetNOut != refs[i].nOuts) {
-                    return (refs, false);
-                }
-            } catch {
-                return (refs, false);
-            }
-        }
         return (refs, true);
     }
 
@@ -187,6 +184,7 @@ contract DependencyAnalyzer {
         address processor,
         uint256 tokenId,
         uint32 depth,
+        PinExpectation memory expected,
         Traversal memory traversal,
         DependencyReport memory report
     ) private view {
@@ -243,15 +241,14 @@ contract DependencyAnalyzer {
             }
         }
 
-        (TapRefs.Target[] memory refs, bool readable) = _loadTargets(processor, tokenId);
-        if (!readable) {
-            report.missingTarget = true;
-            return;
-        }
-
+        (TapRefs.Target[] memory refs, bool readable) = _loadTargets(processor, tokenId, expected);
         if (depth == 0) {
             report.directRefs = uint32(refs.length);
             (report.directDepsCount, report.directDepsHash) = _directDependencyHash(refs);
+        }
+        if (!readable) {
+            report.missingTarget = true;
+            return;
         }
 
         if (depth >= traversal.maxDepth && refs.length > 0) {
@@ -260,7 +257,14 @@ contract DependencyAnalyzer {
         }
 
         for (uint256 i = 0; i < refs.length; i++) {
-            _walk(refs[i].processor, refs[i].id, depth + 1, traversal, report);
+            _walk(
+                refs[i].processor,
+                refs[i].id,
+                depth + 1,
+                PinExpectation(refs[i].nIns, refs[i].nOuts, true),
+                traversal,
+                report
+            );
             if (report.truncated || report.cycleDetected || report.missingTarget) return;
         }
     }
