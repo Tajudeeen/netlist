@@ -55,19 +55,60 @@ async function main() {
   async function deployContract(name, args = [], label = name) {
     const factory = new ethers.ContractFactory(artifacts[name].abi, artifacts[name].bytecode, wallet);
     const c = await factory.deploy(...args);
-    await c.waitForDeployment();
+    const receipt = await c.deploymentTransaction().wait(1);
+    if (!receipt || receipt.status !== 1) {
+      throw new Error(`${name} deployment reverted (tx ${receipt?.hash || "unknown"}).`);
+    }
     const addr = await c.getAddress();
     deployed[label] = addr;
-    const code = await provider.getCode(addr);
-    if (code === "0x") throw new Error(`${name} has no code after deploy — check the receipt.`);
+    let code = "0x";
+    for (let attempt = 0; attempt < 6; attempt++) {
+      code = await provider.getCode(addr);
+      if (code !== "0x") break;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    if (code === "0x") throw new Error(`${name} has no code after deploy — check receipt ${receipt.hash}.`);
     console.log(`  ${label.padEnd(24)} ${addr}  (${(code.length - 2) / 2} bytes)`);
     return c;
   }
 
-  console.log("\nDeploying contracts:");
+  let tap = { ...TAP };
+  let sampleProcessor = "0x839bdD6fa7A66416A609A735e11DE5411B98574e";
+  const factoryCode = await provider.getCode(tap.factory);
+  if (factoryCode === "0x") {
+    if (networkName === "xlayerMainnet") {
+      throw new Error(`TapeOut factory ${tap.factory} has no code on xlayerMainnet.`);
+    }
+    console.log("\nNo live TapeOut factory on this network — deploying TapeOut V2 mocks for testnet:");
+    const mockFactory = await deployContract("MockFactoryV2");
+    const mockImpl = wallet.address;
+    const mockBeacon = await deployContract("MockBeacon", [tap.circuitImplementation, ethers.ZeroAddress]);
+    const mockOpener = await deployContract("MockOpener");
+    const mockPayments = await deployContract("MockPayments");
+    const mockProcessor = await deployContract("MockProcessorV2");
+
+    await (await mockFactory.setCPU(await mockProcessor.getAddress(), true)).wait();
+    await (await mockFactory.setSealed(true)).wait();
+    // Valid 2-input, 1-output NAND circuit (signal 2 = NAND(0, 1))
+    await (await mockProcessor.setCircuit(1, 2, 1, 0, 1, "0x00000000000001", wallet.address)).wait();
+    const container = await mockOpener.accountOf(await mockProcessor.getAddress(), 1);
+    await (await mockPayments.setLive(container, true)).wait();
+
+    tap = {
+      factory: await mockFactory.getAddress(),
+      beacon: await mockBeacon.getAddress(),
+      opener: await mockOpener.getAddress(),
+      payments: await mockPayments.getAddress(),
+      circuitImplementation: mockImpl,
+    };
+    sampleProcessor = await mockProcessor.getAddress();
+    console.log(`  seeded MockProcessorV2 #1 (container ${container})`);
+  }
+
+  console.log("\nDeploying Netlist contracts:");
   const adapterRegistry = await deployContract("ProcessorAdapterRegistry");
   const v2Adapter = await deployContract("TapeOutV2Adapter", [
-    TAP.factory, TAP.beacon, TAP.opener, TAP.payments, TAP.circuitImplementation,
+    tap.factory, tap.beacon, tap.opener, tap.payments, tap.circuitImplementation,
   ]);
   const registry = await deployContract("CompositionRegistry", [
     await adapterRegistry.getAddress(), ATTESTATION_FEE, wallet.address,
@@ -91,23 +132,22 @@ async function main() {
   console.log("  gate.registry / gate.adapterRegistry: OK");
   console.log("  analyzer.adapterRegistry / netlistReader: OK");
 
-  console.log("\nRegistering the REAL TapeOut adapter as the default for factory-recognized processors:");
+  console.log("\nRegistering the TapeOutV2Adapter as the default for factory-recognized processors:");
   await (await adapterRegistry.setDefaultAdapter(await v2Adapter.getAddress())).wait();
   console.log("  setDefaultAdapter(TapeOutV2Adapter): OK");
-  const SAMPLE_PROCESSOR = "0x839bdD6fa7A66416A609A735e11DE5411B98574e";
   const isCpuIface = new ethers.Interface(["function isCPU(address) view returns (bool)"]);
   const isCpu = await provider.call({
-    to: TAP.factory,
-    data: isCpuIface.encodeFunctionData("isCPU", [SAMPLE_PROCESSOR]),
+    to: tap.factory,
+    data: isCpuIface.encodeFunctionData("isCPU", [sampleProcessor]),
   });
   if (!isCpuIface.decodeFunctionResult("isCPU", isCpu)[0]) {
     throw new Error("Sample processor is not registered with the factory — aborting.");
   }
-  await (await adapterRegistry.setAdapter(SAMPLE_PROCESSOR, await v2Adapter.getAddress())).wait();
-  console.log(`  setAdapter(${SAMPLE_PROCESSOR}, TapeOutV2Adapter): OK`);
+  await (await adapterRegistry.setAdapter(sampleProcessor, await v2Adapter.getAddress())).wait();
+  console.log(`  setAdapter(${sampleProcessor}, TapeOutV2Adapter): OK`);
 
   console.log("\nDone. Verify on chain with:");
-  console.log(`  npm run verify:deployed -- ${networkName} ${await adapterRegistry.getAddress()} ${await registry.getAddress()} ${await gate.getAddress()} ${await analyzer.getAddress()} ${SAMPLE_PROCESSOR} 1`);
+  console.log(`  npm run verify:deployed -- ${networkName} ${await adapterRegistry.getAddress()} ${await registry.getAddress()} ${await gate.getAddress()} ${await analyzer.getAddress()} ${sampleProcessor} 1`);
   console.log("\nSave these addresses for the dashboard and submission — json for automation:");
   console.log(JSON.stringify(deployed, null, 2));
 }
